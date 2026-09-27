@@ -1,0 +1,3 @@
+# This file ensures the public/ directory exists so the Dockerfile
+# `COPY --from=builder /app/public ./public` step succeeds.
+# Next.js does not require a public/ directory, but the Docker build does.
