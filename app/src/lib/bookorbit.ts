@@ -46,23 +46,23 @@ export class BookOrbitError extends Error {
 }
 
 /**
- * Obtain a fresh JWT from BookOrbit using email + password.
+ * Obtain a fresh JWT from BookOrbit using username + password.
  * BookOrbit tokens expire after ~15 minutes, so we log in on demand before
  * each sync/API call rather than storing a static token.
  *
- * POST <url>/api/v1/auth/login  body: { email, password }
+ * POST <url>/api/auth/login  body: { username, password }
  * Response may be shaped as { token }, { accessToken }, or { data: { token } }.
  */
 export async function getBookOrbitToken(
   url: string,
-  email: string,
+  username: string,
   password: string
 ): Promise<string> {
-  if (!url || !email || !password) {
-    throw new BookOrbitError("BookOrbit URL, email and password are all required.");
+  if (!url || !username || !password) {
+    throw new BookOrbitError("BookOrbit URL, username and password are all required.");
   }
   const base = url.replace(/\/+$/, "");
-  const endpoint = `${base}/api/v1/auth/login`;
+  const endpoint = `${base}/api/auth/login`;
 
   let res: Response;
   try {
@@ -72,7 +72,7 @@ export async function getBookOrbitToken(
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ username, password }),
       signal: AbortSignal.timeout(20000),
       cache: "no-store",
     });
@@ -83,7 +83,7 @@ export async function getBookOrbitToken(
   }
 
   if (res.status === 401 || res.status === 403) {
-    throw new BookOrbitError("BookOrbit rejected the email/password (unauthorised).", res.status);
+    throw new BookOrbitError("BookOrbit rejected the username/password (unauthorised).", res.status);
   }
   if (!res.ok) {
     throw new BookOrbitError(`BookOrbit login returned HTTP ${res.status}.`, res.status);

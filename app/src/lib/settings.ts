@@ -6,7 +6,7 @@ export interface ResolvedSettings {
   id: number;
   bookOrbitUrl: string | null;
   bookOrbitInternalUrl: string | null;
-  bookOrbitEmail: string | null;
+  bookOrbitUsername: string | null;
   bookOrbitPassword: string | null; // decrypted, plaintext
   hasBookOrbitCredentials: boolean;
   syncIntervalHours: number;
@@ -31,9 +31,9 @@ export async function getSettings(): Promise<ResolvedSettings> {
     id: row.id,
     bookOrbitUrl: row.bookOrbitUrl,
     bookOrbitInternalUrl: row.bookOrbitInternalUrl,
-    bookOrbitEmail: row.bookOrbitEmail,
+    bookOrbitUsername: row.bookOrbitUsername,
     bookOrbitPassword: password,
-    hasBookOrbitCredentials: Boolean(row.bookOrbitUrl && row.bookOrbitEmail && row.bookOrbitPassword),
+    hasBookOrbitCredentials: Boolean(row.bookOrbitUrl && row.bookOrbitUsername && row.bookOrbitPassword),
     syncIntervalHours: row.syncIntervalHours,
     lookbackDays: row.lookbackDays,
     lookaheadDays: row.lookaheadDays,
@@ -51,20 +51,20 @@ export async function getSettings(): Promise<ResolvedSettings> {
  */
 export async function getBookOrbitClient(): Promise<BookOrbitClient | null> {
   const s = await getSettings();
-  if (!s.bookOrbitUrl || !s.bookOrbitEmail || !s.bookOrbitPassword) {
+  if (!s.bookOrbitUrl || !s.bookOrbitUsername || !s.bookOrbitPassword) {
     return null;
   }
   // Prefer the internal/direct URL for server-side calls so we bypass any
   // reverse proxy / SSO (e.g. Caddy + Authelia) sitting in front of BookOrbit.
   const apiUrl = s.bookOrbitInternalUrl || s.bookOrbitUrl;
-  const token = await getBookOrbitToken(apiUrl, s.bookOrbitEmail, s.bookOrbitPassword);
+  const token = await getBookOrbitToken(apiUrl, s.bookOrbitUsername, s.bookOrbitPassword);
   return new BookOrbitClient(apiUrl, token);
 }
 
 export interface UpdateSettingsInput {
   bookOrbitUrl?: string | null;
   bookOrbitInternalUrl?: string | null;
-  bookOrbitEmail?: string | null;
+  bookOrbitUsername?: string | null;
   bookOrbitPassword?: string | null; // plaintext; will be encrypted. Empty string clears.
   syncIntervalHours?: number;
   lookbackDays?: number;
@@ -81,8 +81,8 @@ export async function updateSettings(input: UpdateSettingsInput): Promise<Resolv
   if (input.bookOrbitInternalUrl !== undefined) {
     data.bookOrbitInternalUrl = input.bookOrbitInternalUrl?.trim().replace(/\/+$/, "") || null;
   }
-  if (input.bookOrbitEmail !== undefined) {
-    data.bookOrbitEmail = input.bookOrbitEmail?.trim() || null;
+  if (input.bookOrbitUsername !== undefined) {
+    data.bookOrbitUsername = input.bookOrbitUsername?.trim() || null;
   }
   if (input.bookOrbitPassword !== undefined) {
     // Only overwrite when a non-empty value is supplied; empty string clears it.

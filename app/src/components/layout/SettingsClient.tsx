@@ -7,7 +7,7 @@ import { Button, Card, CardBody, CardHeader, Input, Label, Select, Spinner } fro
 interface SettingsData {
   bookOrbitUrl: string | null;
   bookOrbitInternalUrl: string | null;
-  bookOrbitEmail: string | null;
+  bookOrbitUsername: string | null;
   hasBookOrbitCredentials: boolean;
   syncIntervalHours: number;
   lookbackDays: number;
@@ -26,7 +26,7 @@ export function SettingsClient() {
   const [loading, setLoading] = useState(true);
   const [url, setUrl] = useState("");
   const [internalUrl, setInternalUrl] = useState("");
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [interval, setInterval] = useState(24);
   const [lookback, setLookback] = useState(60);
@@ -45,7 +45,7 @@ export function SettingsClient() {
       setData(d);
       setUrl(d.bookOrbitUrl ?? "");
       setInternalUrl(d.bookOrbitInternalUrl ?? "");
-      setEmail(d.bookOrbitEmail ?? "");
+      setUsername(d.bookOrbitUsername ?? "");
       setInterval(d.syncIntervalHours);
       setLookback(d.lookbackDays);
       setLookahead(d.lookaheadDays);
@@ -69,7 +69,7 @@ export function SettingsClient() {
       const body: Record<string, unknown> = {
         bookOrbitUrl: url,
         bookOrbitInternalUrl: internalUrl,
-        bookOrbitEmail: email,
+        bookOrbitUsername: username,
         syncIntervalHours: interval,
         lookbackDays: lookback,
         lookaheadDays: lookahead,
@@ -102,7 +102,7 @@ export function SettingsClient() {
         body: JSON.stringify({
           bookOrbitUrl: url,
           bookOrbitInternalUrl: internalUrl,
-          bookOrbitEmail: email,
+          bookOrbitUsername: username,
           bookOrbitPassword: password || undefined,
         }),
       });
@@ -195,13 +195,13 @@ export function SettingsClient() {
             </p>
           </div>
           <div>
-            <Label htmlFor="email">BookOrbit Email</Label>
+            <Label htmlFor="username">BookOrbit Username</Label>
             <Input
-              id="email"
-              type="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              id="username"
+              type="text"
+              placeholder="your-bookorbit-username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
             />
           </div>
           <div>

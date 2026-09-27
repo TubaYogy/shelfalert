@@ -32,7 +32,7 @@ model AppSettings {
   id                   Int       @id @default(1)
   bookOrbitUrl         String?
   bookOrbitInternalUrl String? // internal/direct URL used by server-side API calls (bypasses reverse proxy/Authelia)
-  bookOrbitEmail       String? // BookOrbit account email (login)
+  bookOrbitUsername    String? // BookOrbit account username (login)
   bookOrbitPassword String? // AES-encrypted BookOrbit account password
   syncIntervalHours Int       @default(24)
   lookbackDays      Int       @default(60) // 2 months past

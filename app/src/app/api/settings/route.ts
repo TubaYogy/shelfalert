@@ -13,7 +13,7 @@ export async function GET() {
   return ok({
     bookOrbitUrl: s.bookOrbitUrl,
     bookOrbitInternalUrl: s.bookOrbitInternalUrl,
-    bookOrbitEmail: s.bookOrbitEmail,
+    bookOrbitUsername: s.bookOrbitUsername,
     hasBookOrbitCredentials: s.hasBookOrbitCredentials,
     syncIntervalHours: s.syncIntervalHours,
     lookbackDays: s.lookbackDays,
@@ -43,7 +43,7 @@ export async function PATCH(req: NextRequest) {
   const s = await updateSettings({
     bookOrbitUrl: body.bookOrbitUrl as string | undefined,
     bookOrbitInternalUrl: body.bookOrbitInternalUrl as string | undefined,
-    bookOrbitEmail: body.bookOrbitEmail as string | undefined,
+    bookOrbitUsername: body.bookOrbitUsername as string | undefined,
     bookOrbitPassword: body.bookOrbitPassword as string | undefined,
     syncIntervalHours:
       body.syncIntervalHours !== undefined ? Number(body.syncIntervalHours) : undefined,
@@ -61,10 +61,10 @@ export async function PATCH(req: NextRequest) {
 
 /**
  * POST /api/settings — test BookOrbit connection.
- * Body: { bookOrbitUrl?, bookOrbitInternalUrl?, bookOrbitEmail?, bookOrbitPassword? }
+ * Body: { bookOrbitUrl?, bookOrbitInternalUrl?, bookOrbitUsername?, bookOrbitPassword? }
  * — falls back to stored values. Uses the internal/direct URL when provided so
  * the test matches the real server-side path (bypassing reverse proxy/Authelia).
- * Logs in with email/password to obtain a fresh token, then verifies it against
+ * Logs in with username/password to obtain a fresh token, then verifies it against
  * the authors endpoint.
  */
 export async function POST(req: NextRequest) {
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
   let body: {
     bookOrbitUrl?: string;
     bookOrbitInternalUrl?: string;
-    bookOrbitEmail?: string;
+    bookOrbitUsername?: string;
     bookOrbitPassword?: string;
   };
   try {
@@ -90,15 +90,15 @@ export async function POST(req: NextRequest) {
     .replace(/\/+$/, "");
   // Prefer the internal/direct URL — that is what server-side syncs actually use.
   const url = internalUrl || publicUrl;
-  const email = (body.bookOrbitEmail ?? stored.bookOrbitEmail ?? "").trim();
+  const username = (body.bookOrbitUsername ?? stored.bookOrbitUsername ?? "").trim();
   const password = body.bookOrbitPassword?.trim() || stored.bookOrbitPassword || "";
 
-  if (!url || !email || !password) {
-    return fail("BookOrbit URL, email and password are all required to test the connection.");
+  if (!url || !username || !password) {
+    return fail("BookOrbit URL, username and password are all required to test the connection.");
   }
 
   try {
-    const token = await getBookOrbitToken(url, email, password);
+    const token = await getBookOrbitToken(url, username, password);
     const client = new BookOrbitClient(url, token);
     const result = await client.testConnection();
     return ok({ ok: true, authorCount: result.authorCount });
