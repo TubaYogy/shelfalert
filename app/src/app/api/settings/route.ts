@@ -12,6 +12,7 @@ export async function GET() {
   const s = await getSettings();
   return ok({
     bookOrbitUrl: s.bookOrbitUrl,
+    bookOrbitInternalUrl: s.bookOrbitInternalUrl,
     bookOrbitEmail: s.bookOrbitEmail,
     hasBookOrbitCredentials: s.hasBookOrbitCredentials,
     syncIntervalHours: s.syncIntervalHours,
@@ -41,6 +42,7 @@ export async function PATCH(req: NextRequest) {
 
   const s = await updateSettings({
     bookOrbitUrl: body.bookOrbitUrl as string | undefined,
+    bookOrbitInternalUrl: body.bookOrbitInternalUrl as string | undefined,
     bookOrbitEmail: body.bookOrbitEmail as string | undefined,
     bookOrbitPassword: body.bookOrbitPassword as string | undefined,
     syncIntervalHours:
@@ -59,15 +61,22 @@ export async function PATCH(req: NextRequest) {
 
 /**
  * POST /api/settings — test BookOrbit connection.
- * Body: { bookOrbitUrl?, bookOrbitEmail?, bookOrbitPassword? } — falls back to
- * stored values. Logs in with email/password to obtain a fresh token, then
- * verifies it against the authors endpoint.
+ * Body: { bookOrbitUrl?, bookOrbitInternalUrl?, bookOrbitEmail?, bookOrbitPassword? }
+ * — falls back to stored values. Uses the internal/direct URL when provided so
+ * the test matches the real server-side path (bypassing reverse proxy/Authelia).
+ * Logs in with email/password to obtain a fresh token, then verifies it against
+ * the authors endpoint.
  */
 export async function POST(req: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
 
-  let body: { bookOrbitUrl?: string; bookOrbitEmail?: string; bookOrbitPassword?: string };
+  let body: {
+    bookOrbitUrl?: string;
+    bookOrbitInternalUrl?: string;
+    bookOrbitEmail?: string;
+    bookOrbitPassword?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -75,7 +84,12 @@ export async function POST(req: NextRequest) {
   }
 
   const stored = await getSettings();
-  const url = (body.bookOrbitUrl ?? stored.bookOrbitUrl ?? "").trim().replace(/\/+$/, "");
+  const publicUrl = (body.bookOrbitUrl ?? stored.bookOrbitUrl ?? "").trim().replace(/\/+$/, "");
+  const internalUrl = (body.bookOrbitInternalUrl ?? stored.bookOrbitInternalUrl ?? "")
+    .trim()
+    .replace(/\/+$/, "");
+  // Prefer the internal/direct URL — that is what server-side syncs actually use.
+  const url = internalUrl || publicUrl;
   const email = (body.bookOrbitEmail ?? stored.bookOrbitEmail ?? "").trim();
   const password = body.bookOrbitPassword?.trim() || stored.bookOrbitPassword || "";
 

@@ -5,6 +5,7 @@ import { BookOrbitClient, getBookOrbitToken } from "./bookorbit";
 export interface ResolvedSettings {
   id: number;
   bookOrbitUrl: string | null;
+  bookOrbitInternalUrl: string | null;
   bookOrbitEmail: string | null;
   bookOrbitPassword: string | null; // decrypted, plaintext
   hasBookOrbitCredentials: boolean;
@@ -29,6 +30,7 @@ export async function getSettings(): Promise<ResolvedSettings> {
   return {
     id: row.id,
     bookOrbitUrl: row.bookOrbitUrl,
+    bookOrbitInternalUrl: row.bookOrbitInternalUrl,
     bookOrbitEmail: row.bookOrbitEmail,
     bookOrbitPassword: password,
     hasBookOrbitCredentials: Boolean(row.bookOrbitUrl && row.bookOrbitEmail && row.bookOrbitPassword),
@@ -52,12 +54,16 @@ export async function getBookOrbitClient(): Promise<BookOrbitClient | null> {
   if (!s.bookOrbitUrl || !s.bookOrbitEmail || !s.bookOrbitPassword) {
     return null;
   }
-  const token = await getBookOrbitToken(s.bookOrbitUrl, s.bookOrbitEmail, s.bookOrbitPassword);
-  return new BookOrbitClient(s.bookOrbitUrl, token);
+  // Prefer the internal/direct URL for server-side calls so we bypass any
+  // reverse proxy / SSO (e.g. Caddy + Authelia) sitting in front of BookOrbit.
+  const apiUrl = s.bookOrbitInternalUrl || s.bookOrbitUrl;
+  const token = await getBookOrbitToken(apiUrl, s.bookOrbitEmail, s.bookOrbitPassword);
+  return new BookOrbitClient(apiUrl, token);
 }
 
 export interface UpdateSettingsInput {
   bookOrbitUrl?: string | null;
+  bookOrbitInternalUrl?: string | null;
   bookOrbitEmail?: string | null;
   bookOrbitPassword?: string | null; // plaintext; will be encrypted. Empty string clears.
   syncIntervalHours?: number;
@@ -71,6 +77,9 @@ export async function updateSettings(input: UpdateSettingsInput): Promise<Resolv
 
   if (input.bookOrbitUrl !== undefined) {
     data.bookOrbitUrl = input.bookOrbitUrl?.trim().replace(/\/+$/, "") || null;
+  }
+  if (input.bookOrbitInternalUrl !== undefined) {
+    data.bookOrbitInternalUrl = input.bookOrbitInternalUrl?.trim().replace(/\/+$/, "") || null;
   }
   if (input.bookOrbitEmail !== undefined) {
     data.bookOrbitEmail = input.bookOrbitEmail?.trim() || null;

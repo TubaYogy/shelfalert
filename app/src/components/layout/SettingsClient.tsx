@@ -6,6 +6,7 @@ import { Button, Card, CardBody, CardHeader, Input, Label, Select, Spinner } fro
 
 interface SettingsData {
   bookOrbitUrl: string | null;
+  bookOrbitInternalUrl: string | null;
   bookOrbitEmail: string | null;
   hasBookOrbitCredentials: boolean;
   syncIntervalHours: number;
@@ -24,6 +25,7 @@ export function SettingsClient() {
   const [data, setData] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [url, setUrl] = useState("");
+  const [internalUrl, setInternalUrl] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [interval, setInterval] = useState(24);
@@ -42,6 +44,7 @@ export function SettingsClient() {
       const d: SettingsData = await res.json();
       setData(d);
       setUrl(d.bookOrbitUrl ?? "");
+      setInternalUrl(d.bookOrbitInternalUrl ?? "");
       setEmail(d.bookOrbitEmail ?? "");
       setInterval(d.syncIntervalHours);
       setLookback(d.lookbackDays);
@@ -65,6 +68,7 @@ export function SettingsClient() {
     try {
       const body: Record<string, unknown> = {
         bookOrbitUrl: url,
+        bookOrbitInternalUrl: internalUrl,
         bookOrbitEmail: email,
         syncIntervalHours: interval,
         lookbackDays: lookback,
@@ -97,6 +101,7 @@ export function SettingsClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bookOrbitUrl: url,
+          bookOrbitInternalUrl: internalUrl,
           bookOrbitEmail: email,
           bookOrbitPassword: password || undefined,
         }),
@@ -171,10 +176,23 @@ export function SettingsClient() {
             <Label htmlFor="url">BookOrbit URL</Label>
             <Input
               id="url"
-              placeholder="http://192.168.1.50:3000"
+              placeholder="https://books.example.com"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
             />
+          </div>
+          <div>
+            <Label htmlFor="internalUrl">Internal URL (optional)</Label>
+            <Input
+              id="internalUrl"
+              placeholder="http://bookorbit:3000"
+              value={internalUrl}
+              onChange={(e) => setInternalUrl(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Direct container/LAN address used for server-side API calls. Use this to bypass a
+              reverse proxy or SSO (e.g. Authelia). Leave blank to use the URL above.
+            </p>
           </div>
           <div>
             <Label htmlFor="email">BookOrbit Email</Label>
