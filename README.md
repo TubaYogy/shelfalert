@@ -66,8 +66,11 @@ docker compose up -d
 On first boot ShelfAlert creates the admin user and default settings automatically,
 applies the database schema (`prisma db push`), and starts the sync scheduler.
 
-> **Dev mode:** `docker-compose.override.yml` is applied automatically by
-> `docker compose up` and runs the app with hot-reload against the `builder` stage.
+> **Dev mode:** local development uses `docker-compose.dev.yml`, which runs the
+> app with hot-reload against the `builder` stage. It is **not** auto-merged by
+> Docker Compose (so it never interferes with Dockhand/Portainer deployments that
+> only clone the repo). Start it explicitly with:
+> `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`.
 > For a **production-only** run use: `docker compose -f docker-compose.yml up -d`.
 
 ---
@@ -316,7 +319,7 @@ Schema changes are applied automatically on container start via `prisma db push`
 ```
 shelfalert/
 ├── docker-compose.yml            # production stack (app + postgres)
-├── docker-compose.override.yml   # dev hot-reload overrides
+├── docker-compose.dev.yml        # dev hot-reload overrides (run explicitly, not auto-merged)
 ├── .env.example
 └── app/
     ├── Dockerfile                # multi-stage build
