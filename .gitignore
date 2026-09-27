@@ -1,5 +1,11 @@
 .env
-**/node_modules
-**/.next
-*.log
+.env.local
+.env.production
+node_modules/
+app/node_modules/
+app/.next/
+app/out/
+app/node_modules/.prisma/
+*.tsbuildinfo
 .DS_Store
+*.log
