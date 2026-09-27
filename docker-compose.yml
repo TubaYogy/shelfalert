@@ -7,7 +7,7 @@ services:
     ports:
       - "${PORT:-3001}:3000"
     environment:
-      DATABASE_URL: postgresql://shelfalert:${POSTGRES_PASSWORD:-shelfalert}@db:5432/shelfalert?schema=public
+      DATABASE_URL: postgresql://shelfalert:${POSTGRES_PASSWORD:-shelfalert}@shelfalert_db:5432/shelfalert?schema=public
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
