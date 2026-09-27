@@ -1,7 +1,9 @@
-# Production / Dockhand stack — image pulled from GHCR
+# Local development — builds image from source
 services:
   app:
     image: ghcr.io/tubayogy/shelfalert:latest
+    build:
+      context: ./app
     container_name: shelfalert
     restart: unless-stopped
     ports:

@@ -192,25 +192,74 @@ and the `openid profile email` scopes. (Credential login remains available as a 
 
 ## 🐳 Deploying as a Dockhand / Portainer stack
 
-Both tools consume the same `docker-compose.yml`:
+### The image is auto-built for you (no build step at deploy time)
 
-1. **Dockhand:** *Stacks → New Stack → paste the compose file* (or point it at this repo),
-   add the environment variables from `.env.example`, deploy. The services carry
-   `dockhand.stack=shelfalert` labels for grouping.
-2. **Portainer:** *Stacks → Add stack → Web editor*, paste `docker-compose.yml`, add the
-   env vars under **Environment variables**, then **Deploy the stack**.
+A GitHub Actions workflow (`.github/workflows/docker-publish.yml`) **automatically
+builds the Docker image on every push to `main`** (and on manual dispatch) and pushes
+it to the GitHub Container Registry:
+
+```
+ghcr.io/tubayogy/shelfalert:latest
+ghcr.io/tubayogy/shelfalert:sha-<short-sha>   # immutable, per-commit
+```
+
+This is what makes ShelfAlert deployable from Git-based stack managers like **Dockhand**,
+**Portainer** and **Dockge** — those tools pull the compose file from GitHub but **cannot
+build images from source at deploy time**, so `docker-compose.yml` references the
+pre-built GHCR image (it has **no `build:` directive**).
+
+> The GHCR image is **public**, so **no registry authentication is required** in Dockhand
+> to pull it.
+
+### Deploy in Dockhand (recommended)
+
+1. **Stacks → Add a new stack → Git repository.**
+2. **Repository URL:** `https://github.com/TubaYogy/shelfalert`
+3. **Compose file path:** `docker-compose.yml`
+4. **Set the environment variables** in the Dockhand stack UI:
+
+   | Variable            | Required | Notes                                         |
+   |---------------------|----------|-----------------------------------------------|
+   | `POSTGRES_PASSWORD` | ✅       | Password for the bundled Postgres             |
+   | `NEXTAUTH_SECRET`   | ✅       | `openssl rand -hex 32`                         |
+   | `NEXTAUTH_URL`      | ✅       | Public URL, e.g. `http://<host>:3001`         |
+   | `ADMIN_PASSWORD`    | ✅       | Initial admin password                        |
+   | `ADMIN_USERNAME`    | ❌       | Optional — defaults to `admin`                |
+   | `PORT`              | ❌       | Optional — host port, defaults to `3001`      |
+
+5. **Deploy the stack.** Dockhand pulls `ghcr.io/tubayogy/shelfalert:latest`, starts
+   Postgres, applies the schema on boot, and launches ShelfAlert.
+
+### Deploy in Portainer
+
+*Stacks → Add stack → Repository* → point at
+`https://github.com/TubaYogy/shelfalert`, compose path `docker-compose.yml`, add the same
+environment variables under **Environment variables**, then **Deploy the stack**. (Or use
+the Web editor and paste `docker-compose.yml`.)
 
 Published port defaults to **3001** (`PORT` env). The app container listens on `3000`
-internally with a `/login` health check; the DB uses `pg_isready`.
+internally with a `/login` health check; the DB uses `pg_isready`. Services carry
+`dockhand.stack=shelfalert` labels for grouping.
+
+### Building from source instead (local development)
+
+If you'd rather build the image locally instead of pulling from GHCR, use the
+`docker-compose.build.yml` variant (identical to the production stack but adds a
+`build:` directive):
+
+```bash
+docker compose -f docker-compose.build.yml up -d --build
+```
 
 ### Updating (Watchtower compatible)
 
-Both services carry `com.centurylinklabs.watchtower.enable=true`. If you run Watchtower
-it will pull rebuilt images automatically. Manual update:
+Both services carry `com.centurylinklabs.watchtower.enable=true`. Because the image is
+published to GHCR on every push to `main`, Watchtower will pull the rebuilt image
+automatically. Manual update:
 
 ```bash
-docker compose pull        # if using a registry image
-docker compose up -d --build
+docker compose pull        # pulls the latest GHCR image
+docker compose up -d
 ```
 
 Schema changes are applied automatically on container start via `prisma db push`.
