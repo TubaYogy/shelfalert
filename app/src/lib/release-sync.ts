@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { getSettings } from "./settings";
+import { getSettings, getBookOrbitClient } from "./settings";
 import {
   BookOrbitClient,
   buildLibraryIndex,
@@ -32,17 +32,27 @@ const RATE_LIMIT_MS = 500;
 export async function syncAuthorsFromBookOrbit(): Promise<SyncResult> {
   const startedAt = new Date();
   const errors: string[] = [];
-  const settings = await getSettings();
 
-  if (!settings.bookOrbitUrl || !settings.bookOrbitToken) {
+  let client: BookOrbitClient | null;
+  try {
+    client = await getBookOrbitClient();
+  } catch (err) {
+    const msg = (err as Error).message;
     return finalize(startedAt, {
       ok: false,
-      message: "BookOrbit URL / token not configured in Settings.",
+      message: `BookOrbit login failed: ${msg}`,
+      errors: [msg],
+    });
+  }
+
+  if (!client) {
+    return finalize(startedAt, {
+      ok: false,
+      message: "BookOrbit URL / email / password not configured in Settings.",
       errors: ["BookOrbit not configured"],
     });
   }
 
-  const client = new BookOrbitClient(settings.bookOrbitUrl, settings.bookOrbitToken);
   let authorsSynced = 0;
 
   try {
@@ -171,9 +181,12 @@ export async function syncReleases(): Promise<SyncResult> {
   }
 
   // Optional BookOrbit client for library cross-referencing.
+  // Logs in with stored email/password to obtain a fresh token (best-effort).
   let boClient: BookOrbitClient | null = null;
-  if (settings.bookOrbitUrl && settings.bookOrbitToken) {
-    boClient = new BookOrbitClient(settings.bookOrbitUrl, settings.bookOrbitToken);
+  try {
+    boClient = await getBookOrbitClient();
+  } catch (err) {
+    errors.push(`BookOrbit login for library lookup: ${(err as Error).message}`);
   }
 
   let releasesUpserted = 0;

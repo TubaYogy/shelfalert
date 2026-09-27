@@ -6,7 +6,8 @@ import { Button, Card, CardBody, CardHeader, Input, Label, Select, Spinner } fro
 
 interface SettingsData {
   bookOrbitUrl: string | null;
-  hasBookOrbitToken: boolean;
+  bookOrbitEmail: string | null;
+  hasBookOrbitCredentials: boolean;
   syncIntervalHours: number;
   lookbackDays: number;
   lookaheadDays: number;
@@ -23,7 +24,8 @@ export function SettingsClient() {
   const [data, setData] = useState<SettingsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [url, setUrl] = useState("");
-  const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [interval, setInterval] = useState(24);
   const [lookback, setLookback] = useState(60);
   const [lookahead, setLookahead] = useState(90);
@@ -40,6 +42,7 @@ export function SettingsClient() {
       const d: SettingsData = await res.json();
       setData(d);
       setUrl(d.bookOrbitUrl ?? "");
+      setEmail(d.bookOrbitEmail ?? "");
       setInterval(d.syncIntervalHours);
       setLookback(d.lookbackDays);
       setLookahead(d.lookaheadDays);
@@ -62,18 +65,19 @@ export function SettingsClient() {
     try {
       const body: Record<string, unknown> = {
         bookOrbitUrl: url,
+        bookOrbitEmail: email,
         syncIntervalHours: interval,
         lookbackDays: lookback,
         lookaheadDays: lookahead,
       };
-      if (token) body.bookOrbitToken = token;
+      if (password) body.bookOrbitPassword = password;
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       if (res.ok) {
-        setToken("");
+        setPassword("");
         flash("Settings saved");
         await load();
       } else {
@@ -91,7 +95,11 @@ export function SettingsClient() {
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bookOrbitUrl: url, bookOrbitToken: token || undefined }),
+        body: JSON.stringify({
+          bookOrbitUrl: url,
+          bookOrbitEmail: email,
+          bookOrbitPassword: password || undefined,
+        }),
       });
       const d = await res.json();
       if (res.ok) {
@@ -169,21 +177,39 @@ export function SettingsClient() {
             />
           </div>
           <div>
-            <Label htmlFor="token">
-              API Token{" "}
-              {data.hasBookOrbitToken && (
+            <Label htmlFor="email">BookOrbit Email</Label>
+            <Input
+              id="email"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="password">
+              BookOrbit Password{" "}
+              {data.hasBookOrbitCredentials && (
                 <span className="text-xs font-normal text-green-600 dark:text-green-400">
-                  (a token is stored — leave blank to keep it)
+                  (a password is stored — leave blank to keep it)
                 </span>
               )}
             </Label>
             <Input
-              id="token"
+              id="password"
               type="password"
-              placeholder={data.hasBookOrbitToken ? "•••••••• (unchanged)" : "Paste BookOrbit JWT token"}
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
+              placeholder={
+                data.hasBookOrbitCredentials
+                  ? "•••••••• (unchanged)"
+                  : "Your BookOrbit account password"
+              }
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
             />
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              A fresh access token is fetched automatically before each sync (BookOrbit
+              tokens expire after ~15 minutes).
+            </p>
           </div>
           {testResult && (
             <p

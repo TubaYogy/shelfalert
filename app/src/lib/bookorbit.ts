@@ -45,6 +45,82 @@ export class BookOrbitError extends Error {
   }
 }
 
+/**
+ * Obtain a fresh JWT from BookOrbit using email + password.
+ * BookOrbit tokens expire after ~15 minutes, so we log in on demand before
+ * each sync/API call rather than storing a static token.
+ *
+ * POST <url>/api/v1/auth/login  body: { email, password }
+ * Response may be shaped as { token }, { accessToken }, or { data: { token } }.
+ */
+export async function getBookOrbitToken(
+  url: string,
+  email: string,
+  password: string
+): Promise<string> {
+  if (!url || !email || !password) {
+    throw new BookOrbitError("BookOrbit URL, email and password are all required.");
+  }
+  const base = url.replace(/\/+$/, "");
+  const endpoint = `${base}/api/v1/auth/login`;
+
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(20000),
+      cache: "no-store",
+    });
+  } catch (err) {
+    throw new BookOrbitError(
+      `Could not reach BookOrbit at ${base}: ${(err as Error).message}`
+    );
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new BookOrbitError("BookOrbit rejected the email/password (unauthorised).", res.status);
+  }
+  if (!res.ok) {
+    throw new BookOrbitError(`BookOrbit login returned HTTP ${res.status}.`, res.status);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch {
+    throw new BookOrbitError("BookOrbit login returned an invalid (non-JSON) response.");
+  }
+
+  const token = extractToken(payload);
+  if (!token) {
+    throw new BookOrbitError("BookOrbit login succeeded but no token was found in the response.");
+  }
+  return token;
+}
+
+/** Pull a token string out of the various shapes BookOrbit may return. */
+function extractToken(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const obj = payload as Record<string, unknown>;
+  const candidates: unknown[] = [
+    obj.token,
+    obj.accessToken,
+    obj.access_token,
+    (obj.data as Record<string, unknown> | undefined)?.token,
+    (obj.data as Record<string, unknown> | undefined)?.accessToken,
+    (obj.data as Record<string, unknown> | undefined)?.access_token,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.length > 0) return c;
+  }
+  return null;
+}
+
 export class BookOrbitClient {
   private baseUrl: string;
   private token: string;

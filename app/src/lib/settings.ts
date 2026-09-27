@@ -1,11 +1,13 @@
 import { prisma } from "./prisma";
 import { decrypt, encrypt, generateToken } from "./crypto";
+import { BookOrbitClient, getBookOrbitToken } from "./bookorbit";
 
 export interface ResolvedSettings {
   id: number;
   bookOrbitUrl: string | null;
-  bookOrbitToken: string | null; // decrypted, plaintext
-  hasBookOrbitToken: boolean;
+  bookOrbitEmail: string | null;
+  bookOrbitPassword: string | null; // decrypted, plaintext
+  hasBookOrbitCredentials: boolean;
   syncIntervalHours: number;
   lookbackDays: number;
   lookaheadDays: number;
@@ -15,7 +17,7 @@ export interface ResolvedSettings {
   lastSyncStatus: string | null;
 }
 
-/** Fetch (creating if necessary) the singleton settings row with decrypted token. */
+/** Fetch (creating if necessary) the singleton settings row with decrypted password. */
 export async function getSettings(): Promise<ResolvedSettings> {
   let row = await prisma.appSettings.findUnique({ where: { id: 1 } });
   if (!row) {
@@ -23,11 +25,13 @@ export async function getSettings(): Promise<ResolvedSettings> {
       data: { id: 1, widgetToken: generateToken() },
     });
   }
+  const password = decrypt(row.bookOrbitPassword);
   return {
     id: row.id,
     bookOrbitUrl: row.bookOrbitUrl,
-    bookOrbitToken: decrypt(row.bookOrbitToken),
-    hasBookOrbitToken: Boolean(row.bookOrbitToken),
+    bookOrbitEmail: row.bookOrbitEmail,
+    bookOrbitPassword: password,
+    hasBookOrbitCredentials: Boolean(row.bookOrbitUrl && row.bookOrbitEmail && row.bookOrbitPassword),
     syncIntervalHours: row.syncIntervalHours,
     lookbackDays: row.lookbackDays,
     lookaheadDays: row.lookaheadDays,
@@ -38,9 +42,24 @@ export async function getSettings(): Promise<ResolvedSettings> {
   };
 }
 
+/**
+ * Build a BookOrbitClient using a freshly-obtained token.
+ * BookOrbit JWTs expire after ~15 minutes, so we log in on demand each time.
+ * Returns null when credentials are not fully configured.
+ */
+export async function getBookOrbitClient(): Promise<BookOrbitClient | null> {
+  const s = await getSettings();
+  if (!s.bookOrbitUrl || !s.bookOrbitEmail || !s.bookOrbitPassword) {
+    return null;
+  }
+  const token = await getBookOrbitToken(s.bookOrbitUrl, s.bookOrbitEmail, s.bookOrbitPassword);
+  return new BookOrbitClient(s.bookOrbitUrl, token);
+}
+
 export interface UpdateSettingsInput {
   bookOrbitUrl?: string | null;
-  bookOrbitToken?: string | null; // plaintext; will be encrypted. Empty string clears.
+  bookOrbitEmail?: string | null;
+  bookOrbitPassword?: string | null; // plaintext; will be encrypted. Empty string clears.
   syncIntervalHours?: number;
   lookbackDays?: number;
   lookaheadDays?: number;
@@ -53,12 +72,15 @@ export async function updateSettings(input: UpdateSettingsInput): Promise<Resolv
   if (input.bookOrbitUrl !== undefined) {
     data.bookOrbitUrl = input.bookOrbitUrl?.trim().replace(/\/+$/, "") || null;
   }
-  if (input.bookOrbitToken !== undefined) {
+  if (input.bookOrbitEmail !== undefined) {
+    data.bookOrbitEmail = input.bookOrbitEmail?.trim() || null;
+  }
+  if (input.bookOrbitPassword !== undefined) {
     // Only overwrite when a non-empty value is supplied; empty string clears it.
-    if (input.bookOrbitToken === "") {
-      data.bookOrbitToken = null;
-    } else if (input.bookOrbitToken) {
-      data.bookOrbitToken = encrypt(input.bookOrbitToken.trim());
+    if (input.bookOrbitPassword === "") {
+      data.bookOrbitPassword = null;
+    } else if (input.bookOrbitPassword) {
+      data.bookOrbitPassword = encrypt(input.bookOrbitPassword.trim());
     }
   }
   if (input.syncIntervalHours !== undefined) {

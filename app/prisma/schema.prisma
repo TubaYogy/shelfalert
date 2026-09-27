@@ -31,7 +31,8 @@ model User {
 model AppSettings {
   id                Int       @id @default(1)
   bookOrbitUrl      String?
-  bookOrbitToken    String? // AES-encrypted JWT bearer token from BookOrbit
+  bookOrbitEmail    String? // BookOrbit account email (login)
+  bookOrbitPassword String? // AES-encrypted BookOrbit account password
   syncIntervalHours Int       @default(24)
   lookbackDays      Int       @default(60) // 2 months past
   lookaheadDays     Int       @default(90) // 3 months future

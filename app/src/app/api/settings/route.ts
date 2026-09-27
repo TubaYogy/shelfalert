@@ -1,10 +1,10 @@
 import { NextRequest } from "next/server";
 import { requireSession, ok, fail } from "@/lib/api";
 import { getSettings, updateSettings } from "@/lib/settings";
-import { BookOrbitClient } from "@/lib/bookorbit";
+import { BookOrbitClient, getBookOrbitToken } from "@/lib/bookorbit";
 import { env } from "@/lib/env";
 
-/** GET /api/settings — return settings (token masked, widget URL included). */
+/** GET /api/settings — return settings (password masked, widget URL included). */
 export async function GET() {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
@@ -12,7 +12,8 @@ export async function GET() {
   const s = await getSettings();
   return ok({
     bookOrbitUrl: s.bookOrbitUrl,
-    hasBookOrbitToken: s.hasBookOrbitToken,
+    bookOrbitEmail: s.bookOrbitEmail,
+    hasBookOrbitCredentials: s.hasBookOrbitCredentials,
     syncIntervalHours: s.syncIntervalHours,
     lookbackDays: s.lookbackDays,
     lookaheadDays: s.lookaheadDays,
@@ -40,7 +41,8 @@ export async function PATCH(req: NextRequest) {
 
   const s = await updateSettings({
     bookOrbitUrl: body.bookOrbitUrl as string | undefined,
-    bookOrbitToken: body.bookOrbitToken as string | undefined,
+    bookOrbitEmail: body.bookOrbitEmail as string | undefined,
+    bookOrbitPassword: body.bookOrbitPassword as string | undefined,
     syncIntervalHours:
       body.syncIntervalHours !== undefined ? Number(body.syncIntervalHours) : undefined,
     lookbackDays: body.lookbackDays !== undefined ? Number(body.lookbackDays) : undefined,
@@ -51,19 +53,21 @@ export async function PATCH(req: NextRequest) {
   return ok({
     ok: true,
     widgetToken: s.widgetToken,
-    hasBookOrbitToken: s.hasBookOrbitToken,
+    hasBookOrbitCredentials: s.hasBookOrbitCredentials,
   });
 }
 
 /**
  * POST /api/settings — test BookOrbit connection.
- * Body: { bookOrbitUrl?, bookOrbitToken? } — falls back to stored values.
+ * Body: { bookOrbitUrl?, bookOrbitEmail?, bookOrbitPassword? } — falls back to
+ * stored values. Logs in with email/password to obtain a fresh token, then
+ * verifies it against the authors endpoint.
  */
 export async function POST(req: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
 
-  let body: { bookOrbitUrl?: string; bookOrbitToken?: string };
+  let body: { bookOrbitUrl?: string; bookOrbitEmail?: string; bookOrbitPassword?: string };
   try {
     body = await req.json();
   } catch {
@@ -72,13 +76,15 @@ export async function POST(req: NextRequest) {
 
   const stored = await getSettings();
   const url = (body.bookOrbitUrl ?? stored.bookOrbitUrl ?? "").trim().replace(/\/+$/, "");
-  const token = body.bookOrbitToken?.trim() || stored.bookOrbitToken || "";
+  const email = (body.bookOrbitEmail ?? stored.bookOrbitEmail ?? "").trim();
+  const password = body.bookOrbitPassword?.trim() || stored.bookOrbitPassword || "";
 
-  if (!url || !token) {
-    return fail("BookOrbit URL and token are both required to test the connection.");
+  if (!url || !email || !password) {
+    return fail("BookOrbit URL, email and password are all required to test the connection.");
   }
 
   try {
+    const token = await getBookOrbitToken(url, email, password);
     const client = new BookOrbitClient(url, token);
     const result = await client.testConnection();
     return ok({ ok: true, authorCount: result.authorCount });
