@@ -64,6 +64,8 @@ export async function getBookOrbitToken(
   const base = url.replace(/\/+$/, "");
   const endpoint = `${base}/api/v1/auth/login`;
 
+  console.log(`[BookOrbit] login → ${endpoint} (username length: ${username.length})`);
+
   let res: Response;
   try {
     res = await fetch(endpoint, {
@@ -82,23 +84,73 @@ export async function getBookOrbitToken(
     );
   }
 
-  if (res.status === 401 || res.status === 403) {
-    throw new BookOrbitError("BookOrbit rejected the username/password (unauthorised).", res.status);
+  // Read the body once so it can be used for both error diagnostics and
+  // success parsing (a Response body can only be consumed a single time).
+  let bodyText = "";
+  try {
+    bodyText = await res.text();
+  } catch {
+    bodyText = "";
   }
+
+  console.log(`[BookOrbit] login response: HTTP ${res.status}, body length: ${bodyText.length}`);
+
+  if (res.status === 429) {
+    throw new BookOrbitError(
+      "BookOrbit login is rate-limited — too many recent attempts. Wait 1 minute and try again.",
+      429
+    );
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    let body: Record<string, unknown> | null = null;
+    try {
+      body = JSON.parse(bodyText) as Record<string, unknown>;
+    } catch {
+      body = null;
+    }
+
+    if (body && body.errorCode === "ACCOUNT_LOCKED") {
+      const retryAfterSeconds =
+        typeof body.retryAfterSeconds === "number" ? body.retryAfterSeconds : null;
+      const minutes =
+        retryAfterSeconds !== null ? Math.ceil(retryAfterSeconds / 60) : null;
+      const when =
+        minutes !== null
+          ? `Try again in ${minutes} minute(s).`
+          : "Try again later.";
+      throw new BookOrbitError(
+        `BookOrbit account temporarily locked after too many failed attempts. ${when}`,
+        res.status
+      );
+    }
+
+    const snippet = bodyText.replace(/\s+/g, " ").trim().slice(0, 300);
+    throw new BookOrbitError(
+      `BookOrbit login rejected (HTTP ${res.status}). Check the username and password. Server replied: ${snippet}`,
+      res.status
+    );
+  }
+
   if (!res.ok) {
-    throw new BookOrbitError(`BookOrbit login returned HTTP ${res.status}.`, res.status);
+    throw new BookOrbitError(
+      `BookOrbit login returned HTTP ${res.status}. Server replied: ${bodyText.slice(0, 200)}`,
+      res.status
+    );
   }
 
   let payload: unknown;
   try {
-    payload = await res.json();
+    payload = JSON.parse(bodyText);
   } catch {
     throw new BookOrbitError("BookOrbit login returned an invalid (non-JSON) response.");
   }
 
   const token = extractToken(payload);
   if (!token) {
-    throw new BookOrbitError("BookOrbit login succeeded but no token was found in the response.");
+    throw new BookOrbitError(
+      `BookOrbit login succeeded but no token was found in the response. Server replied: ${bodyText.slice(0, 300)}`
+    );
   }
   return token;
 }
