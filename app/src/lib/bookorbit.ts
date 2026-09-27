@@ -50,7 +50,7 @@ export class BookOrbitError extends Error {
  * BookOrbit tokens expire after ~15 minutes, so we log in on demand before
  * each sync/API call rather than storing a static token.
  *
- * POST <url>/api/auth/login  body: { username, password }
+ * POST <url>/api/v1/auth/login  body: { username, password }
  * Response may be shaped as { token }, { accessToken }, or { data: { token } }.
  */
 export async function getBookOrbitToken(
@@ -62,7 +62,7 @@ export async function getBookOrbitToken(
     throw new BookOrbitError("BookOrbit URL, username and password are all required.");
   }
   const base = url.replace(/\/+$/, "");
-  const endpoint = `${base}/api/auth/login`;
+  const endpoint = `${base}/api/v1/auth/login`;
 
   let res: Response;
   try {
