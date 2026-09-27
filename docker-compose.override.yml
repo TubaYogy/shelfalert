@@ -1,0 +1,20 @@
+# Development overrides — automatically merged by `docker compose` when present.
+# Runs the app with a bind-mount + hot reload instead of the production image.
+# Usage (dev):  docker compose up   (this file is applied automatically)
+# For prod-only:  docker compose -f docker-compose.yml up -d
+
+services:
+  app:
+    build:
+      context: ./app
+      target: builder
+    command: sh -c "npx prisma db push --skip-generate --accept-data-loss && npm run dev"
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./app/src:/app/src
+      - ./app/prisma:/app/prisma
+      - ./app/server.ts:/app/server.ts
+    # In dev we expose the internal port directly.
+    ports:
+      - "${PORT:-3001}:3000"

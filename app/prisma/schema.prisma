@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ReleaseStatus {
+  UPCOMING
+  RECENT
+  MISSING
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  email     String?  @unique
+  password  String // bcrypt hashed
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AppSettings {
+  id                Int       @id @default(1)
+  bookOrbitUrl      String?
+  bookOrbitToken    String? // AES-encrypted JWT bearer token from BookOrbit
+  syncIntervalHours Int       @default(24)
+  lookbackDays      Int       @default(60) // 2 months past
+  lookaheadDays     Int       @default(90) // 3 months future
+  widgetToken       String?
+  lastBookOrbitSync DateTime?
+  lastReleaseSync   DateTime?
+  lastSyncStatus    String?
+  updatedAt         DateTime  @updatedAt
+}
+
+model Author {
+  id          Int       @id @default(autoincrement())
+  name        String
+  sortName    String?
+  bookOrbitId Int?      @unique
+  photoUrl    String?
+  isActive    Boolean   @default(true)
+  source      String    @default("bookorbit") // "bookorbit" | "manual"
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  releases    Release[]
+}
+
+model Release {
+  id            Int           @id @default(autoincrement())
+  title         String
+  authorId      Int
+  author        Author        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  isbn          String?
+  isbn13        String?
+  publishDate   DateTime?
+  format        String? // ebook, hardcover, audiobook, paperback
+  seriesName    String?
+  seriesNumber  Float?
+  coverUrl      String?
+  description   String?
+  googleBooksId String?       @unique
+  openLibraryId String?       @unique
+  pageCount     Int?
+  inLibrary     Boolean       @default(false)
+  status        ReleaseStatus @default(UPCOMING)
+  dataSource    String        @default("google_books")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([authorId])
+  @@index([publishDate])
+  @@index([status])
+}
+
+model SeriesGap {
+  id           Int      @id @default(autoincrement())
+  seriesName   String
+  authorName   String?
+  missingNumber Float
+  expectedTitle String?
+  bookOrbitSeriesId Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([seriesName, missingNumber])
+}
