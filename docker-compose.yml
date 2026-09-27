@@ -34,7 +34,7 @@ services:
       - "org.opencontainers.image.title=ShelfAlert"
       - "org.opencontainers.image.description=Upcoming book release tracker"
     networks:
-      - shelfalert_net
+      - mediaserver_yogy
 
   db:
     image: postgres:17-alpine
@@ -56,12 +56,12 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
       - "dockhand.stack=shelfalert"
     networks:
-      - shelfalert_net
+      - mediaserver_yogy
 
 volumes:
   shelfalert_db:
     name: shelfalert_db
 
 networks:
-  shelfalert_net:
-    name: shelfalert_net
+  mediaserver_yogy:
+    external: true
