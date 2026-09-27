@@ -76,9 +76,13 @@ export async function authenticate(
 /** Persist the session cookie (call from a route handler / server action). */
 export async function setSessionCookie(token: string): Promise<void> {
   const store = await cookies();
+  // Use Secure flag only when the app URL is actually HTTPS.
+  // NODE_ENV=production on a plain-HTTP home NAS would otherwise cause the
+  // browser to silently drop the cookie, making every login redirect back.
+  const isHttps = env.authUrl.startsWith("https://");
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: env.nodeEnv === "production",
+    secure: isHttps,
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE,
