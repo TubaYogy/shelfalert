@@ -66,11 +66,11 @@ docker compose up -d
 On first boot ShelfAlert creates the admin user and default settings automatically,
 applies the database schema (`prisma db push`), and starts the sync scheduler.
 
-> **Dev mode:** local development uses `docker-compose.dev.yml`, which runs the
+> **Dev mode:** local development uses `dev/docker-compose.dev.yml`, which runs the
 > app with hot-reload against the `builder` stage. It is **not** auto-merged by
 > Docker Compose (so it never interferes with Dockhand/Portainer deployments that
 > only clone the repo). Start it explicitly with:
-> `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`.
+> `docker compose -f docker-compose.yml -f dev/docker-compose.dev.yml up`.
 > For a **production-only** run use: `docker compose -f docker-compose.yml up -d`.
 
 ---
@@ -247,11 +247,11 @@ internally with a `/login` health check; the DB uses `pg_isready`. Services carr
 ### Building from source instead (local development)
 
 If you'd rather build the image locally instead of pulling from GHCR, use the
-`docker-compose.build.yml` variant (identical to the production stack but adds a
+`dev/docker-compose.build.yml` variant (identical to the production stack but adds a
 `build:` directive):
 
 ```bash
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f dev/docker-compose.build.yml up -d --build
 ```
 
 ### Updating (Watchtower compatible)
@@ -318,8 +318,10 @@ Schema changes are applied automatically on container start via `prisma db push`
 
 ```
 shelfalert/
-├── docker-compose.yml            # production stack (app + postgres)
-├── docker-compose.dev.yml        # dev hot-reload overrides (run explicitly, not auto-merged)
+├── docker-compose.yml            # production stack (app + postgres) — the only compose Dockhand sees
+├── dev/
+│   ├── docker-compose.dev.yml    # dev hot-reload overrides (run explicitly, not auto-merged)
+│   └── docker-compose.build.yml  # build-from-source variant for local dev
 ├── .env.example
 └── app/
     ├── Dockerfile                # multi-stage build
