@@ -4,36 +4,55 @@ import { normalizeIsbn, normalizeTitle } from "./utils";
  * Minimal typed client for a self-hosted BookOrbit instance.
  * API base: <url>/api/v1/ — Bearer (JWT) auth.
  *
+ * IMPORTANT — verified against BookOrbit source (NestJS DTOs):
+ *   - List endpoints paginate with `page` (0-based) and `size` (max 100),
+ *     NOT `limit`. BookOrbit runs class-validator with
+ *     `forbidNonWhitelisted: true`, so any unknown query param (e.g. `limit`)
+ *     is rejected with HTTP 400.
+ *   - List responses are shaped `{ items, total, page, size }`.
+ *
  * Endpoints used:
- *   GET /api/v1/authors            (paginated)
- *   GET /api/v1/authors/:id/books
- *   GET /api/v1/series             (paginated)
- *   GET /api/v1/series/:id/books
+ *   GET /api/v1/authors            (ListAuthorsDto:      page, size, sort, order)
+ *   GET /api/v1/authors/:id/books  (ListAuthorBooksDto:  page, size)
+ *   GET /api/v1/series             (ListSeriesDto:       page, size) — includes gaps
+ *   GET /api/v1/series/:id/books   (ListSeriesBooksDto:  page, size)
  */
+
+/** Max page size BookOrbit permits (ListAuthorsDto: @Max(100)). */
+const BOOKORBIT_MAX_PAGE_SIZE = 100;
 
 export interface BookOrbitAuthor {
   id: number;
   name: string;
   sortName?: string | null;
-  photoUrl?: string | null;
+  imageUrl?: string | null;
+  coverBookId?: number | null;
   bookCount?: number;
 }
 
 export interface BookOrbitBook {
   id: number;
-  title: string;
-  isbn?: string | null;
+  title: string | null;
   isbn13?: string | null;
+  seriesId?: number | null;
   seriesName?: string | null;
-  seriesNumber?: number | null;
-  authorId?: number | null;
+  /** BookOrbit's SeriesIndex is a string ("1", "1.5"), not a number. */
+  seriesIndex?: string | null;
+  authors?: string[];
+  publishedDate?: string | null;
+  publishedYear?: number | null;
 }
 
 export interface BookOrbitSeries {
   id: number;
   name: string;
-  authorName?: string | null;
+  authors?: string[];
   bookCount?: number;
+  /** Total the metadata provider reports for the series, or null. */
+  expectedBookCount?: number | null;
+  /** Missing volume numbers, as computed by BookOrbit itself. */
+  gaps?: number[];
+  gapCount?: number;
 }
 
 export class BookOrbitError extends Error {
@@ -216,55 +235,56 @@ export class BookOrbitClient {
 
   /**
    * Test connectivity + auth. Returns the number of authors visible.
+   * Uses page 0 (BookOrbit paging is 0-based) and the `size` param.
    */
   async testConnection(): Promise<{ ok: boolean; authorCount: number }> {
-    const page = await this.fetchList<BookOrbitAuthor>("/authors", 1, 1);
+    const page = await this.fetchList<BookOrbitAuthor>("/authors", 0, 1);
     return { ok: true, authorCount: page.total ?? page.items.length };
   }
 
   /**
-   * Generic paginated fetch. BookOrbit responses may be shaped as
-   * { data: [...], meta: { total, page, limit } } OR { items, total } OR a bare array.
-   * This normalises all three.
+   * Generic paginated fetch. BookOrbit responses are shaped
+   * `{ items: [...], total, page, size }`; this also tolerates a `{ data: [...] }`
+   * envelope or a bare array. Paging is 0-based and uses `size` (NOT `limit`).
    */
   private async fetchList<T>(
     path: string,
     page: number,
-    limit: number
+    size: number
   ): Promise<{ items: T[]; total?: number }> {
-    const raw = await this.request<unknown>(path, { page, limit });
+    const raw = await this.request<unknown>(path, { page, size });
     return normalizeList<T>(raw);
   }
 
   /** Fetch ALL authors across all pages. */
-  async getAllAuthors(pageSize = 200): Promise<BookOrbitAuthor[]> {
+  async getAllAuthors(pageSize = BOOKORBIT_MAX_PAGE_SIZE): Promise<BookOrbitAuthor[]> {
     return this.getAllPages<BookOrbitAuthor>("/authors", pageSize);
   }
 
-  /** Fetch ALL series across all pages. */
-  async getAllSeries(pageSize = 200): Promise<BookOrbitSeries[]> {
+  /** Fetch ALL series across all pages (each already carries its own gap info). */
+  async getAllSeries(pageSize = BOOKORBIT_MAX_PAGE_SIZE): Promise<BookOrbitSeries[]> {
     return this.getAllPages<BookOrbitSeries>("/series", pageSize);
   }
 
   async getAuthorBooks(authorId: number): Promise<BookOrbitBook[]> {
-    const raw = await this.request<unknown>(`/authors/${authorId}/books`, { limit: 500 });
-    return normalizeList<BookOrbitBook>(raw).items;
+    return this.getAllPages<BookOrbitBook>(`/authors/${authorId}/books`, BOOKORBIT_MAX_PAGE_SIZE);
   }
 
   async getSeriesBooks(seriesId: number): Promise<BookOrbitBook[]> {
-    const raw = await this.request<unknown>(`/series/${seriesId}/books`, { limit: 500 });
-    return normalizeList<BookOrbitBook>(raw).items;
+    return this.getAllPages<BookOrbitBook>(`/series/${seriesId}/books`, BOOKORBIT_MAX_PAGE_SIZE);
   }
 
   private async getAllPages<T>(path: string, pageSize: number): Promise<T[]> {
+    const size = Math.min(pageSize, BOOKORBIT_MAX_PAGE_SIZE);
     const all: T[] = [];
-    let page = 1;
+    // BookOrbit paging is 0-based.
+    let page = 0;
     // Hard cap to avoid runaway loops on misbehaving instances.
     const MAX_PAGES = 100;
-    while (page <= MAX_PAGES) {
-      const { items, total } = await this.fetchList<T>(path, page, pageSize);
+    while (page < MAX_PAGES) {
+      const { items, total } = await this.fetchList<T>(path, page, size);
       all.push(...items);
-      if (items.length < pageSize) break;
+      if (items.length < size) break;
       if (total !== undefined && all.length >= total) break;
       page += 1;
     }
@@ -284,9 +304,8 @@ export function buildLibraryIndex(books: BookOrbitBook[]): {
   const isbns = new Set<string>();
   for (const b of books) {
     if (b.title) titles.add(normalizeTitle(b.title));
-    const i10 = normalizeIsbn(b.isbn);
+    // BookOrbit's BookCard exposes isbn13 only (no separate isbn10).
     const i13 = normalizeIsbn(b.isbn13);
-    if (i10) isbns.add(i10);
     if (i13) isbns.add(i13);
   }
   return { titles, isbns };

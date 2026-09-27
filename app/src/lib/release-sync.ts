@@ -1,10 +1,6 @@
 import { prisma } from "./prisma";
 import { getSettings, getBookOrbitClient } from "./settings";
-import {
-  BookOrbitClient,
-  buildLibraryIndex,
-  BookOrbitBook,
-} from "./bookorbit";
+import { BookOrbitClient, buildLibraryIndex } from "./bookorbit";
 import { searchGoogleBooksByAuthor, NormalizedRelease } from "./google-books";
 import { searchOpenLibraryByAuthor } from "./open-library";
 import { daysBetween, normalizeIsbn, normalizeTitle, sleep } from "./utils";
@@ -63,13 +59,13 @@ export async function syncAuthorsFromBookOrbit(): Promise<SyncResult> {
         update: {
           name: a.name,
           sortName: a.sortName ?? undefined,
-          photoUrl: a.photoUrl ?? undefined,
+          photoUrl: a.imageUrl ?? undefined,
           source: "bookorbit",
         },
         create: {
           name: a.name,
           sortName: a.sortName ?? undefined,
-          photoUrl: a.photoUrl ?? undefined,
+          photoUrl: a.imageUrl ?? undefined,
           bookOrbitId: a.id,
           source: "bookorbit",
         },
@@ -117,42 +113,32 @@ export async function syncAuthorsFromBookOrbit(): Promise<SyncResult> {
 /* ------------------------------------------------------------------ */
 
 export async function detectSeriesGaps(client: BookOrbitClient): Promise<number> {
+  // BookOrbit computes and exposes missing volume numbers per series directly
+  // (SeriesSummary.gaps), so we trust its own gap detection rather than
+  // re-deriving it from the volume list. This avoids an N+1 call per series.
   const series = await client.getAllSeries();
   // Reset existing gaps; recompute fresh.
   await prisma.seriesGap.deleteMany({});
   let gapCount = 0;
 
   for (const s of series) {
-    await sleep(200);
-    let books: BookOrbitBook[] = [];
-    try {
-      books = await client.getSeriesBooks(s.id);
-    } catch {
-      continue;
-    }
-    const numbers = books
-      .map((b) => (b.seriesNumber != null ? Number(b.seriesNumber) : null))
-      .filter((n): n is number => n != null && Number.isFinite(n) && Number.isInteger(n))
-      .sort((a, b) => a - b);
+    const gaps = Array.isArray(s.gaps) ? s.gaps : [];
+    if (gaps.length === 0) continue;
+    const authorName = s.authors && s.authors.length > 0 ? s.authors.join(", ") : undefined;
 
-    if (numbers.length < 2) continue;
-    const min = numbers[0];
-    const max = numbers[numbers.length - 1];
-    const present = new Set(numbers);
-    for (let i = Math.max(1, min); i < max; i++) {
-      if (!present.has(i)) {
-        await prisma.seriesGap.upsert({
-          where: { seriesName_missingNumber: { seriesName: s.name, missingNumber: i } },
-          update: { authorName: s.authorName ?? undefined, bookOrbitSeriesId: s.id },
-          create: {
-            seriesName: s.name,
-            authorName: s.authorName ?? undefined,
-            missingNumber: i,
-            bookOrbitSeriesId: s.id,
-          },
-        });
-        gapCount += 1;
-      }
+    for (const n of gaps) {
+      if (!Number.isFinite(n) || !Number.isInteger(n)) continue;
+      await prisma.seriesGap.upsert({
+        where: { seriesName_missingNumber: { seriesName: s.name, missingNumber: n } },
+        update: { authorName, bookOrbitSeriesId: s.id },
+        create: {
+          seriesName: s.name,
+          authorName,
+          missingNumber: n,
+          bookOrbitSeriesId: s.id,
+        },
+      });
+      gapCount += 1;
     }
   }
   return gapCount;
