@@ -19,6 +19,13 @@ interface SeriesGap {
   seriesName: string;
   authorName: string | null;
   missingNumber: number;
+  expectedTitle: string | null;
+}
+
+interface GroupedSeriesGap {
+  seriesName: string;
+  authorName: string | null;
+  missing: { number: number; title: string | null }[];
 }
 
 interface ReleasesResponse {
@@ -140,9 +147,24 @@ export function DashboardClient() {
     () => activeLettersFor(recent.map((r) => surnameOf(r.author.name))),
     [recent]
   );
+  // Group flat gaps by series name, sorted by series name then by missing number.
+  const groupedSeriesGaps = useMemo<GroupedSeriesGap[]>(() => {
+    const map = new Map<string, GroupedSeriesGap>();
+    for (const g of data?.seriesGaps ?? []) {
+      if (!map.has(g.seriesName)) {
+        map.set(g.seriesName, { seriesName: g.seriesName, authorName: g.authorName ?? null, missing: [] });
+      }
+      map.get(g.seriesName)!.missing.push({ number: g.missingNumber, title: g.expectedTitle ?? null });
+    }
+    // Sort each group's missing list by book number.
+    const groups = [...map.values()];
+    for (const g of groups) g.missing.sort((a, b) => a.number - b.number);
+    return groups.sort((a, b) => a.seriesName.localeCompare(b.seriesName));
+  }, [data]);
+
   const seriesActiveLetters = useMemo(
-    () => activeLettersFor((data?.seriesGaps ?? []).map((g) => g.seriesName)),
-    [data]
+    () => activeLettersFor(groupedSeriesGaps.map((g) => g.seriesName)),
+    [groupedSeriesGaps]
   );
 
   const upcomingFiltered = useMemo(
@@ -157,10 +179,13 @@ export function DashboardClient() {
     if (recentLetter) list = list.filter((r) => letterOf(surnameOf(r.author.name)) === recentLetter);
     return list;
   }, [recent, recentLetter, recentMissingOnly]);
-  const seriesGapsFiltered = useMemo(() => {
-    const gaps = data?.seriesGaps ?? [];
-    return seriesLetter ? gaps.filter((g) => letterOf(g.seriesName) === seriesLetter) : gaps;
-  }, [data, seriesLetter]);
+  const seriesGapsFiltered = useMemo(
+    () =>
+      seriesLetter
+        ? groupedSeriesGaps.filter((g) => letterOf(g.seriesName) === seriesLetter)
+        : groupedSeriesGaps,
+    [groupedSeriesGaps, seriesLetter]
+  );
 
   const upcomingByMonth = useMemo(() => {
     const groups = new Map<string, ReleaseCardData[]>();
@@ -353,7 +378,7 @@ export function DashboardClient() {
             )}
           </section>
 
-          {data && data.seriesGaps.length > 0 && (
+          {groupedSeriesGaps.length > 0 && (
             <section>
               <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold">
                 <AlertTriangle className="h-5 w-5 text-orange-500" />
@@ -361,7 +386,7 @@ export function DashboardClient() {
               </h2>
               <div className="mb-3">
                 <LetterFilterBar
-                  items={data.seriesGaps.map((g) => ({ key: g.seriesName }))}
+                  items={groupedSeriesGaps.map((g) => ({ key: g.seriesName }))}
                   activeLetters={seriesActiveLetters}
                   selected={seriesLetter}
                   onSelect={setSeriesLetter}
@@ -371,22 +396,32 @@ export function DashboardClient() {
                 <CardBody className="divide-y divide-slate-100 p-0 dark:divide-slate-800">
                   {seriesGapsFiltered.length === 0 ? (
                     <div className="px-4 py-6 text-center text-sm text-slate-400">
-                      No series starting with “{seriesLetter}”.
+                      No series starting with &ldquo;{seriesLetter}&rdquo;.
                     </div>
                   ) : (
                     seriesGapsFiltered.map((g) => (
-                    <div key={g.id} className="flex items-center justify-between px-4 py-3">
-                      <div>
-                        <p className="text-sm font-medium">{g.seriesName}</p>
-                        {g.authorName && (
-                          <p className="text-xs text-slate-500 dark:text-slate-400">{g.authorName}</p>
-                        )}
+                      <div key={g.seriesName} className="px-4 py-3">
+                        <div className="mb-2 flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-medium">{g.seriesName}</p>
+                            {g.authorName && (
+                              <p className="text-xs text-slate-500 dark:text-slate-400">{g.authorName}</p>
+                            )}
+                          </div>
+                          <StatusBadge status="MISSING" />
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {g.missing.map((m) => (
+                            <span
+                              key={m.number}
+                              title={m.title ?? undefined}
+                              className="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-700 ring-1 ring-inset ring-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:ring-orange-500/30"
+                            >
+                              #{m.number}{m.title ? ` · ${m.title}` : ""}
+                            </span>
+                          ))}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-slate-500">Book #{g.missingNumber}</span>
-                        <StatusBadge status="MISSING" />
-                      </div>
-                    </div>
                     ))
                   )}
                 </CardBody>

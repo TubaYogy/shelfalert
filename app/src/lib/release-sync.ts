@@ -3,7 +3,7 @@ import { getSettings, getBookOrbitClient } from "./settings";
 import { BookOrbitClient, BookOrbitBook, buildLibraryIndex } from "./bookorbit";
 import { searchGoogleBooksByAuthor, NormalizedRelease } from "./google-books";
 import { searchOpenLibraryByAuthor } from "./open-library";
-import { searchHardcoverByAuthor } from "./hardcover";
+import { searchHardcoverByAuthor, lookupSeriesBookTitles } from "./hardcover";
 import type { Author } from "@prisma/client";
 import type { ResolvedSettings } from "./settings";
 import { daysBetween, normalizeIsbn, normalizeTitle, parseFlexibleDate, sleep } from "./utils";
@@ -124,21 +124,39 @@ export async function detectSeriesGaps(client: BookOrbitClient): Promise<number>
   await prisma.seriesGap.deleteMany({});
   let gapCount = 0;
 
+  // Fetch Hardcover API key once — used to enrich gap titles (best-effort).
+  const settings = await getSettings();
+  const hardcoverKey = settings.hardcoverApiKey ?? null;
+
   for (const s of series) {
     const gaps = Array.isArray(s.gaps) ? s.gaps : [];
     if (gaps.length === 0) continue;
     const authorName = s.authors && s.authors.length > 0 ? s.authors.join(", ") : undefined;
 
+    // Attempt Hardcover title lookup for this series (only when key is configured).
+    let titleMap = new Map<number, string>();
+    if (hardcoverKey) {
+      try {
+        titleMap = await lookupSeriesBookTitles(s.name, hardcoverKey);
+        // Space calls to respect Hardcover's 60 req/min limit.
+        await sleep(1100);
+      } catch {
+        /* best-effort — continue without titles */
+      }
+    }
+
     for (const n of gaps) {
       if (!Number.isFinite(n) || !Number.isInteger(n)) continue;
+      const expectedTitle = titleMap.get(n) ?? null;
       await prisma.seriesGap.upsert({
         where: { seriesName_missingNumber: { seriesName: s.name, missingNumber: n } },
-        update: { authorName, bookOrbitSeriesId: s.id },
+        update: { authorName, bookOrbitSeriesId: s.id, ...(expectedTitle ? { expectedTitle } : {}) },
         create: {
           seriesName: s.name,
           authorName,
           missingNumber: n,
           bookOrbitSeriesId: s.id,
+          expectedTitle,
         },
       });
       gapCount += 1;

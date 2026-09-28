@@ -224,6 +224,79 @@ export async function searchHardcoverByAuthor(
   return { releases, resolvedAuthorId: authorId };
 }
 
+/* ------------------------------------------------------------------ */
+/*  Series book title lookup                                           */
+/* ------------------------------------------------------------------ */
+
+const SERIES_BOOKS_QUERY = `
+  query SeriesBooks($name: String!) {
+    series(where: { name: { _ilike: $name } }, limit: 5) {
+      id
+      name
+      series_books(order_by: { position: asc }) {
+        position
+        book {
+          title
+        }
+      }
+    }
+  }
+`;
+
+interface SeriesBooksData {
+  series?: {
+    id: number;
+    name?: string | null;
+    series_books?: {
+      position?: number | string | null;
+      book?: { title?: string | null } | null;
+    }[];
+  }[];
+}
+
+/**
+ * Fetch book titles for specific missing positions in a named series.
+ * Returns a Map<position, title> for every position that Hardcover knows about.
+ * Best-effort — returns an empty Map on any error.
+ */
+export async function lookupSeriesBookTitles(
+  seriesName: string,
+  apiKey: string
+): Promise<Map<number, string>> {
+  const map = new Map<number, string>();
+  try {
+    const data = await hardcoverGraphQL<SeriesBooksData>(
+      SERIES_BOOKS_QUERY,
+      { name: seriesName },
+      apiKey
+    );
+
+    const results = data.series ?? [];
+    if (results.length === 0) return map;
+
+    // Pick the closest name match.
+    const target = seriesName.trim().toLowerCase();
+    let best = results[0];
+    for (const s of results) {
+      if ((s.name ?? "").toLowerCase() === target) {
+        best = s;
+        break;
+      }
+    }
+
+    for (const sb of best.series_books ?? []) {
+      const pos = Number(sb.position);
+      const title = sb.book?.title ?? null;
+      if (Number.isFinite(pos) && pos > 0 && title) {
+        map.set(pos, title);
+      }
+    }
+  } catch {
+    /* best-effort — swallow errors */
+  }
+  return map;
+}
+
 /** Verify an API token by querying the current user. Returns the username. */
 export async function testHardcoverToken(apiKey: string): Promise<string> {
   const data = await hardcoverGraphQL<{ me?: { id?: number; username?: string } | { id?: number; username?: string }[] }>(
