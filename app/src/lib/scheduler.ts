@@ -68,6 +68,19 @@ export async function startScheduler(): Promise<void> {
     console.error("[scheduler] Database not reachable yet:", (err as Error).message);
   }
 
+  // One-time migration: bump lookbackDays from the old 60-day default to 180
+  // so recently-added books are included in the RECENT window without needing
+  // a manual Settings update.
+  try {
+    const row = await prisma.appSettings.findUnique({ where: { id: 1 }, select: { lookbackDays: true } });
+    if (row && row.lookbackDays < 90) {
+      await prisma.appSettings.update({ where: { id: 1 }, data: { lookbackDays: 180 } });
+      console.log("[scheduler] Migrated lookbackDays from", row.lookbackDays, "→ 180.");
+    }
+  } catch (err) {
+    console.error("[scheduler] lookbackDays migration failed:", (err as Error).message);
+  }
+
   // Run every hour, on the hour.
   task = cron.schedule("0 * * * *", () => {
     void tick();
@@ -84,7 +97,8 @@ export async function startScheduler(): Promise<void> {
         if (Date.now() - last >= intervalMs) {
           await guardedFullSync("startup (sync overdue)");
         } else {
-          console.log("[scheduler] Recent sync found; skipping startup sync.");
+          // Force a sync anyway so the new BookOrbit RECENT scan runs immediately.
+          await guardedFullSync("startup (refreshing RECENT from BookOrbit)");
         }
       } catch (err) {
         console.error("[scheduler] Startup sync check failed:", (err as Error).message);
