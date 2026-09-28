@@ -4,7 +4,6 @@ import { BookOrbitClient, BookOrbitBook, buildLibraryIndex } from "./bookorbit";
 import { searchGoogleBooksByAuthor, NormalizedRelease } from "./google-books";
 import { searchOpenLibraryByAuthor } from "./open-library";
 import { searchHardcoverByAuthor, lookupSeriesBookTitles } from "./hardcover";
-import { scrapeBookNotificationCalendar } from "./booknotification";
 import type { Author } from "@prisma/client";
 import type { ResolvedSettings } from "./settings";
 import { daysBetween, normalizeIsbn, normalizeTitle, parseFlexibleDate, sleep } from "./utils";
@@ -598,38 +597,16 @@ function matchAuthor(authorNames: string[], index: Map<string, Author>): Author 
  * authors that are NOT yet on BookNotification (i.e. ones the user still needs
  * to add to their BookNotification watchlist).
  */
-export async function syncBookNotification(): Promise<SyncResult> {
+export async function syncBookNotification(
+  releases: NormalizedRelease[]
+): Promise<SyncResult> {
   const startedAt = new Date();
   const errors: string[] = [];
-
-  const settings = await getSettings();
-  if (!settings.bookNotificationLogin || !settings.bookNotificationPassword) {
-    return finalize(startedAt, {
-      ok: false,
-      message: "BookNotification login/password not configured in Settings.",
-      errors: ["Missing credentials"],
-    });
-  }
-
-  let releases: NormalizedRelease[];
-  try {
-    releases = await scrapeBookNotificationCalendar(
-      settings.bookNotificationLogin,
-      settings.bookNotificationPassword
-    );
-  } catch (err) {
-    const msg = (err as Error).message;
-    return finalize(startedAt, {
-      ok: false,
-      message: `BookNotification scrape failed: ${msg}`,
-      errors: [msg],
-    });
-  }
 
   if (releases.length === 0) {
     return finalize(startedAt, {
       ok: false,
-      message: "No releases found on the BookNotification calendar.",
+      message: "No releases found in the uploaded BookNotification CSV.",
       errors: ["Zero releases parsed"],
     });
   }

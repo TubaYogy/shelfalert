@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession, ok } from "@/lib/api";
-import { getSettings } from "@/lib/settings";
 import type { Prisma, ReleaseStatus } from "@prisma/client";
 
 /**
@@ -45,23 +44,21 @@ export async function GET(req: NextRequest) {
     orderBy: [{ seriesName: "asc" }, { missingNumber: "asc" }],
   });
 
-  // Authors tracked in ShelfAlert but not yet seen on the BookNotification
-  // calendar — only surfaced when BookNotification credentials are configured.
-  const settings = await getSettings();
-  let untrackedAuthors: { id: number; name: string }[] = [];
-  if (settings.hasBookNotificationCredentials) {
-    untrackedAuthors = await prisma.author.findMany({
-      where: { bookNotificationTracked: false, isActive: true },
-      select: { id: true, name: true },
-      orderBy: { name: "asc" },
-    });
-  }
+  // Authors tracked in ShelfAlert but not yet seen on the BookNotification CSV —
+  // these are the ones the user still needs to add to their BookNotification
+  // watchlist. Populated once a CSV has been imported (matched authors get
+  // flagged), so any that remain false are the "add to BookNotification" list.
+  const untrackedAuthors = await prisma.author.findMany({
+    where: { bookNotificationTracked: false, isActive: true },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
 
   return ok({
     releases,
     counts: { upcoming, recent, missing, total: upcoming + recent + missing },
     seriesGaps,
     untrackedAuthors,
-    bookNotificationEnabled: settings.hasBookNotificationCredentials,
+    bookNotificationEnabled: true,
   });
 }

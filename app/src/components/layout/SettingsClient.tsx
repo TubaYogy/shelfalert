@@ -10,8 +10,6 @@ interface SettingsData {
   bookOrbitUsername: string | null;
   hasBookOrbitCredentials: boolean;
   hardcoverApiKey: string | null;
-  bookNotificationLogin: string | null;
-  hasBookNotificationCredentials: boolean;
   syncIntervalHours: number;
   lookbackDays: number;
   lookaheadDays: number;
@@ -34,8 +32,7 @@ export function SettingsClient() {
   const [hardcoverKey, setHardcoverKey] = useState("");
   const [hardcoverTesting, setHardcoverTesting] = useState(false);
   const [hardcoverResult, setHardcoverResult] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [bnLogin, setBnLogin] = useState("");
-  const [bnPassword, setBnPassword] = useState("");
+  const [bnFile, setBnFile] = useState<File | null>(null);
   const [bnSyncing, setBnSyncing] = useState(false);
   const [bnResult, setBnResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [interval, setInterval] = useState(24);
@@ -56,7 +53,6 @@ export function SettingsClient() {
       setUrl(d.bookOrbitUrl ?? "");
       setInternalUrl(d.bookOrbitInternalUrl ?? "");
       setUsername(d.bookOrbitUsername ?? "");
-      setBnLogin(d.bookNotificationLogin ?? "");
       setInterval(d.syncIntervalHours);
       setLookback(d.lookbackDays);
       setLookahead(d.lookaheadDays);
@@ -87,8 +83,6 @@ export function SettingsClient() {
       };
       if (password) body.bookOrbitPassword = password;
       if (hardcoverKey) body.hardcoverApiKey = hardcoverKey;
-      body.bookNotificationLogin = bnLogin;
-      if (bnPassword) body.bookNotificationPassword = bnPassword;
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -97,7 +91,6 @@ export function SettingsClient() {
       if (res.ok) {
         setPassword("");
         setHardcoverKey("");
-        setBnPassword("");
         flash("Settings saved");
         await load();
       } else {
@@ -130,16 +123,27 @@ export function SettingsClient() {
     }
   }
 
-  async function syncBookNotification() {
+  async function importBookNotificationCsv() {
+    if (!bnFile) {
+      setBnResult({ ok: false, msg: "Choose a CSV file first." });
+      return;
+    }
     setBnSyncing(true);
     setBnResult(null);
     try {
-      const res = await fetch("/api/sync/booknotification", { method: "POST" });
+      const form = new FormData();
+      form.append("file", bnFile);
+      const res = await fetch("/api/sync/booknotification", {
+        method: "POST",
+        body: form,
+      });
       const d = await res.json();
       if (res.ok && d.ok) {
-        setBnResult({ ok: true, msg: d.message ?? "BookNotification sync complete." });
+        setBnResult({ ok: true, msg: d.message ?? "BookNotification CSV imported." });
+        setBnFile(null);
+        await load();
       } else {
-        setBnResult({ ok: false, msg: d.message ?? d.error ?? "Sync failed" });
+        setBnResult({ ok: false, msg: d.message ?? d.error ?? "Import failed" });
       }
     } catch {
       setBnResult({ ok: false, msg: "Network error" });
@@ -354,7 +358,7 @@ export function SettingsClient() {
         </CardBody>
       </Card>
 
-      {/* BookNotification connection */}
+      {/* BookNotification CSV import */}
       <Card>
         <CardHeader>
           <h2 className="flex items-center gap-2 font-semibold">
@@ -363,43 +367,33 @@ export function SettingsClient() {
         </CardHeader>
         <CardBody className="space-y-4">
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Imports upcoming releases from your BookNotification.com book calendar and flags any
-            tracked authors that are not yet on your BookNotification watchlist. Enter the same
-            login you use at booknotification.com.
+            Imports upcoming releases from a BookNotification.com CSV export and flags any tracked
+            authors that are not yet on your BookNotification watchlist.
           </p>
-          <div>
-            <Label htmlFor="bnLogin">BookNotification Login / Email</Label>
-            <Input
-              id="bnLogin"
-              type="text"
-              placeholder="your-booknotification-login"
-              value={bnLogin}
-              onChange={(e) => setBnLogin(e.target.value)}
-            />
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800/60 dark:text-slate-400">
+            <span className="font-medium">How to get the CSV: </span>
+            sign in at booknotification.com, go to <span className="font-medium">My Library</span>,
+            and use the <span className="font-medium">Download / Export CSV</span> option. Then
+            upload that file below. (Server-side login is blocked by BookNotification&apos;s
+            firewall, so this manual export is the supported flow.)
           </div>
           <div>
-            <Label htmlFor="bnPassword">
-              BookNotification Password{" "}
-              {data.hasBookNotificationCredentials && (
-                <span className="text-xs font-normal text-green-600 dark:text-green-400">
-                  (a password is stored — leave blank to keep it)
-                </span>
-              )}
-            </Label>
-            <Input
-              id="bnPassword"
-              type="password"
-              placeholder={
-                data.hasBookNotificationCredentials
-                  ? "•••••••• (unchanged)"
-                  : "Your BookNotification account password"
-              }
-              value={bnPassword}
-              onChange={(e) => setBnPassword(e.target.value)}
+            <Label htmlFor="bnFile">BookNotification CSV file</Label>
+            <input
+              id="bnFile"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => {
+                setBnFile(e.target.files?.[0] ?? null);
+                setBnResult(null);
+              }}
+              className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-600 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-brand-700 dark:text-slate-400"
             />
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              Save your credentials first, then run the sync below.
-            </p>
+            {bnFile && (
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Selected: {bnFile.name}
+              </p>
+            )}
           </div>
           {bnResult && (
             <p
@@ -415,11 +409,11 @@ export function SettingsClient() {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={syncBookNotification}
-              disabled={bnSyncing || !data.hasBookNotificationCredentials}
+              onClick={importBookNotificationCsv}
+              disabled={bnSyncing || !bnFile}
             >
               {bnSyncing ? <Spinner /> : <RefreshCw className="h-4 w-4" />}
-              Sync BookNotification
+              Import CSV
             </Button>
           </div>
         </CardBody>

@@ -2,30 +2,23 @@ import { NormalizedRelease } from "./google-books";
 import { parseFlexibleDate } from "./utils";
 
 /**
- * BookNotification.com scraper.
+ * BookNotification.com CSV import.
  *
- * BookNotification is a WordPress site with no public JSON/GraphQL API, so we
- * log in via the standard `wp-login.php` form POST and scrape the authenticated
- * "book calendar" HTML page.
+ * BookNotification is a WordPress site fronted by a LiteSpeed WAF that blocks
+ * every non-browser TLS fingerprint (server-side scraping from Node.js is
+ * redirected to /browser-update.html before any session cookie is set), so we
+ * cannot log in and scrape the calendar programmatically. Instead the user
+ * downloads their book list as a CSV from booknotification.com (My Library →
+ * Download / Export CSV) and uploads it here.
  *
- * The calendar rows mirror the CSV export the user can download:
- *   Book Title | Author | Series ("Name, #N" / "Standalone" / "Collection") | Release Date (YYYY-MM-DD)
+ * The CSV columns are:
+ *   "Book Title","Author","Series","Release Date"
+ * e.g.
+ *   "His Wild Blood","Ed James","DI Rob Marshall, #10","2026-08-31"
  *
- * Parsing is intentionally defensive — the WordPress theme markup can change, so
- * we try several strategies (HTML table rows, embedded JSON, definition lists)
- * and, when nothing matches, surface a snippet of the returned HTML so the
- * failure is diagnosable.
+ * The Series field is "Standalone"/"Collection"/etc for non-series titles and
+ * "Series Name, #N" for series entries. Dates are YYYY-MM-DD.
  */
-
-const BN_BASE = "https://www.booknotification.com";
-const CALENDAR_PATH = "/my-library/book-calendar/";
-
-const BROWSER_HEADERS: Record<string, string> = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-GB,en;q=0.9",
-};
 
 /** Series field values that are categories rather than an actual series name. */
 const NON_SERIES = new Set([
@@ -40,155 +33,153 @@ const NON_SERIES = new Set([
   "",
 ]);
 
-/** Read all Set-Cookie headers in a runtime-portable way. */
-function readSetCookies(headers: Headers): string[] {
-  // Node 18.14+ / undici expose getSetCookie(); fall back to the single header.
-  const anyHeaders = headers as unknown as { getSetCookie?: () => string[] };
-  if (typeof anyHeaders.getSetCookie === "function") {
-    return anyHeaders.getSetCookie();
-  }
-  const single = headers.get("set-cookie");
-  return single ? [single] : [];
-}
+const DATE_RE = /\d{4}-\d{2}-\d{2}/;
 
-/** Merge Set-Cookie values into a single Cookie request-header string. */
-function collectCookies(existing: Map<string, string>, headers: Headers): void {
-  for (const raw of readSetCookies(headers)) {
-    const pair = raw.split(";")[0];
-    const eq = pair.indexOf("=");
-    if (eq <= 0) continue;
-    const name = pair.slice(0, eq).trim();
-    const value = pair.slice(eq + 1).trim();
-    if (!name) continue;
-    // A cookie set to "deleted" or empty means WordPress is clearing it.
-    if (value === "" || value.toLowerCase() === "deleted") {
-      existing.delete(name);
+/* ------------------------------------------------------------------ */
+/*  CSV parsing                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Parse a single CSV line into fields, honouring double-quoted fields that may
+ * contain commas and escaped quotes ("" -> ").
+ */
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      fields.push(cur);
+      cur = "";
     } else {
-      existing.set(name, value);
+      cur += ch;
     }
   }
-}
-
-function cookieHeader(jar: Map<string, string>): string {
-  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-}
-
-/**
- * Log into BookNotification and return a cookie jar containing the WordPress
- * session cookies. Throws with a clear message when login clearly failed.
- */
-async function loginToBookNotification(
-  userLogin: string,
-  userPass: string
-): Promise<Map<string, string>> {
-  const jar = new Map<string, string>();
-
-  // 1) Prime the WordPress "test cookie" by GETting the login page first.
-  try {
-    const pre = await fetch(`${BN_BASE}/login/`, {
-      headers: BROWSER_HEADERS,
-      redirect: "manual",
-      signal: AbortSignal.timeout(30000),
-    });
-    collectCookies(jar, pre.headers);
-  } catch {
-    /* non-fatal — proceed to POST anyway */
-  }
-  if (!jar.has("wordpress_test_cookie")) {
-    jar.set("wordpress_test_cookie", "WP+Cookie+check");
-  }
-
-  const body = new URLSearchParams({
-    log: userLogin,
-    pwd: userPass,
-    rememberme: "forever",
-    "wp-submit": "Log In",
-    _wp_http_referer: "/login/",
-  });
-
-  const res = await fetch(`${BN_BASE}/logout/login.php`, {
-    method: "POST",
-    headers: {
-      ...BROWSER_HEADERS,
-      "Content-Type": "application/x-www-form-urlencoded",
-      Referer: `${BN_BASE}/login/`,
-      Origin: BN_BASE,
-      Cookie: cookieHeader(jar),
-    },
-    body: body.toString(),
-    redirect: "manual", // WordPress 302-redirects on a successful login.
-    signal: AbortSignal.timeout(30000),
-  });
-
-  collectCookies(jar, res.headers);
-
-  const loggedIn = [...jar.keys()].some((k) => k.startsWith("wordpress_logged_in"));
-  if (!loggedIn) {
-    throw new Error(
-      "BookNotification login failed — no session cookie returned (check the login/email and password in Settings)."
-    );
-  }
-  return jar;
+  fields.push(cur);
+  return fields.map((f) => f.trim());
 }
 
 /**
- * Log into BookNotification.com and scrape the upcoming book calendar.
- * Returns a normalized release for every parseable row.
+ * Split raw CSV text into logical rows. A quoted field can legally contain
+ * newlines, so we track quote state across physical lines.
  */
-export async function scrapeBookNotificationCalendar(
-  userLogin: string,
-  userPass: string
-): Promise<NormalizedRelease[]> {
-  const jar = await loginToBookNotification(userLogin, userPass);
-
-  // Follow up to 3 redirects manually while carrying cookies along.
-  let url = `${BN_BASE}${CALENDAR_PATH}`;
-  let html = "";
-  for (let hop = 0; hop < 4; hop++) {
-    const res: Response = await fetch(url, {
-      headers: {
-        ...BROWSER_HEADERS,
-        Cookie: cookieHeader(jar),
-        Referer: `${BN_BASE}/`,
-      },
-      redirect: "manual",
-      signal: AbortSignal.timeout(30000),
-    });
-    collectCookies(jar, res.headers);
-
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
-      if (!loc) break;
-      url = loc.startsWith("http") ? loc : `${BN_BASE}${loc.startsWith("/") ? "" : "/"}${loc}`;
-      continue;
+function splitCsvRows(csvText: string): string[] {
+  const rows: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  const text = csvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      // Toggle, but handle escaped "" inside quotes.
+      if (inQuotes && text[i + 1] === '"') {
+        cur += '""';
+        i++;
+        continue;
+      }
+      inQuotes = !inQuotes;
+      cur += ch;
+    } else if (ch === "\n" && !inQuotes) {
+      if (cur.trim() !== "") rows.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
     }
-    if (!res.ok) {
-      throw new Error(`BookNotification calendar returned HTTP ${res.status}`);
+  }
+  if (cur.trim() !== "") rows.push(cur);
+  return rows;
+}
+
+/** Locate a column index by matching any of the given header aliases. */
+function findColumn(header: string[], aliases: string[]): number {
+  const norm = header.map((h) => h.toLowerCase().replace(/[^a-z]/g, ""));
+  for (const alias of aliases) {
+    const a = alias.toLowerCase().replace(/[^a-z]/g, "");
+    const idx = norm.indexOf(a);
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
+/**
+ * Parse a BookNotification CSV export into normalized releases.
+ * Expected columns: Book Title, Author, Series, Release Date.
+ */
+export function parseBookNotificationCsv(csvText: string): NormalizedRelease[] {
+  const rows = splitCsvRows(csvText);
+  if (rows.length === 0) return [];
+
+  const header = parseCsvLine(rows[0]);
+  const looksLikeHeader =
+    findColumn(header, ["booktitle", "title", "book"]) !== -1 ||
+    findColumn(header, ["author", "authors"]) !== -1;
+
+  let titleIdx = 0;
+  let authorIdx = 1;
+  let seriesIdx = 2;
+  let dateIdx = 3;
+  let startRow = 0;
+
+  if (looksLikeHeader) {
+    titleIdx = findColumn(header, ["booktitle", "title", "book"]);
+    authorIdx = findColumn(header, ["author", "authors"]);
+    seriesIdx = findColumn(header, ["series"]);
+    dateIdx = findColumn(header, ["releasedate", "date", "publishdate", "pubdate", "released"]);
+    startRow = 1;
+    if (titleIdx === -1) titleIdx = 0;
+    if (authorIdx === -1) authorIdx = 1;
+  }
+
+  const byKey = new Map<string, NormalizedRelease>();
+
+  for (let r = startRow; r < rows.length; r++) {
+    const cells = parseCsvLine(rows[r]);
+    if (cells.length === 0) continue;
+
+    const title = cells[titleIdx] ?? "";
+    const author = cells[authorIdx] ?? "";
+    const series = seriesIdx >= 0 ? cells[seriesIdx] ?? "" : "";
+
+    // Resolve the date: prefer the mapped column, else find any YYYY-MM-DD cell.
+    let dateStr = dateIdx >= 0 ? cells[dateIdx] ?? "" : "";
+    if (!DATE_RE.test(dateStr)) {
+      const found = cells.find((c) => DATE_RE.test(c));
+      dateStr = found ? found.match(DATE_RE)![0] : "";
+    } else {
+      dateStr = dateStr.match(DATE_RE)![0];
     }
-    html = await res.text();
-    break;
+    if (!dateStr) continue;
+
+    const rel = buildRelease(title, author, series, dateStr);
+    if (!rel) continue;
+    const key = `${rel.title.toLowerCase()}|${(rel.authorNames[0] ?? "").toLowerCase()}|${
+      rel.publishDateRaw ?? ""
+    }`;
+    if (!byKey.has(key)) byKey.set(key, rel);
   }
 
-  if (!html) {
-    throw new Error("BookNotification calendar returned an empty response");
-  }
-
-  const releases = parseCalendarHtml(html);
-  if (releases.length === 0) {
-    const snippet = html.replace(/\s+/g, " ").slice(0, 2000);
-    throw new Error(
-      `No releases parsed from the BookNotification calendar — the page structure may have changed. HTML preview: ${snippet}`
-    );
-  }
-  return releases;
+  return [...byKey.values()];
 }
 
 /* ------------------------------------------------------------------ */
-/*  HTML parsing                                                       */
+/*  Shared helpers                                                     */
 /* ------------------------------------------------------------------ */
 
 const TAG_STRIP = /<[^>]+>/g;
-const DATE_RE = /\d{4}-\d{2}-\d{2}/;
 
 /** Decode the handful of HTML entities that appear in book/author fields. */
 function decodeEntities(text: string): string {
@@ -218,6 +209,11 @@ function cleanCell(html: string): string {
   return decodeEntities(html.replace(TAG_STRIP, " ")).replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Parse an HTML calendar table into normalized releases. Retained as a helper
+ * in case a future BookNotification export is HTML rather than CSV; the CSV
+ * path above is the supported flow.
+ */
 export function parseCalendarHtml(html: string): NormalizedRelease[] {
   const byKey = new Map<string, NormalizedRelease>();
   const add = (rel: NormalizedRelease | null) => {
@@ -245,7 +241,6 @@ export function parseCalendarHtml(html: string): NormalizedRelease[] {
     const dateStr = dateCell.match(DATE_RE)?.[0];
     if (!dateStr) continue;
 
-    // Non-date cells, in order, map to: title, author, series.
     const rest = cells.filter((c) => c !== dateCell);
     const [title, author, series] = rest;
     if (title && author) add(buildRelease(title, author, series ?? "", dateStr));
