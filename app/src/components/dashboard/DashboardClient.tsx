@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, RotateCw, CalendarClock, AlertTriangle, Library } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RefreshCw, RotateCw, CalendarClock, AlertTriangle, Library, Search, X } from "lucide-react";
 import { Button, Card, CardBody, Spinner } from "@/components/ui";
 import { ReleaseCard, type ReleaseCardData } from "./ReleaseCard";
 import { StatusBadge } from "./StatusBadge";
@@ -38,6 +38,8 @@ export function DashboardClient() {
   const [authors, setAuthors] = useState<AuthorLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAuthor, setSelectedAuthor] = useState<number | "all">("all");
+  const [authorSearch, setAuthorSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const [upcomingLetter, setUpcomingLetter] = useState("");
   const [recentLetter, setRecentLetter] = useState("");
   const [seriesLetter, setSeriesLetter] = useState("");
@@ -86,6 +88,12 @@ export function DashboardClient() {
       setTimeout(() => setToast(null), 6000);
     }
   }
+
+  const visibleAuthors = useMemo(() => {
+    const q = authorSearch.trim().toLowerCase();
+    if (!q) return authors;
+    return authors.filter((a) => a.name.toLowerCase().includes(q));
+  }, [authors, authorSearch]);
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -189,30 +197,62 @@ export function DashboardClient() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_1fr]">
         {/* Author filter sidebar */}
-        <aside className="space-y-1">
-          <h2 className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        <aside className="flex flex-col gap-2">
+          <h2 className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
             Authors
           </h2>
-          <button
-            onClick={() => setSelectedAuthor("all")}
-            className={filterClass(selectedAuthor === "all")}
-          >
-            All authors
-          </button>
-          {authors.map((a) => (
-            <button
-              key={a.id}
-              onClick={() => setSelectedAuthor(a.id)}
-              className={filterClass(selectedAuthor === a.id)}
-            >
-              <span className="truncate">{a.name}</span>
-              {a.upcomingReleases > 0 && (
-                <span className="ml-auto rounded-full bg-brand-100 px-1.5 text-xs text-brand-700 dark:bg-brand-500/20 dark:text-brand-300">
-                  {a.upcomingReleases}
-                </span>
-              )}
-            </button>
-          ))}
+
+          {/* Search box */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              ref={searchRef}
+              type="text"
+              placeholder="Search authors…"
+              value={authorSearch}
+              onChange={(e) => setAuthorSearch(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-8 text-sm text-slate-800 placeholder-slate-400 focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:border-brand-500"
+            />
+            {authorSearch && (
+              <button
+                onClick={() => { setAuthorSearch(""); searchRef.current?.focus(); }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* "All authors" always visible */}
+          <div className="space-y-0.5 overflow-y-auto" style={{ maxHeight: "70vh" }}>
+            {!authorSearch && (
+              <button
+                onClick={() => setSelectedAuthor("all")}
+                className={filterClass(selectedAuthor === "all")}
+              >
+                All authors
+              </button>
+            )}
+            {visibleAuthors.length === 0 && authorSearch ? (
+              <p className="px-2 py-3 text-xs text-slate-400">No authors match "{authorSearch}"</p>
+            ) : (
+              visibleAuthors.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => setSelectedAuthor(a.id)}
+                  className={filterClass(selectedAuthor === a.id)}
+                >
+                  <span className="truncate">{a.name}</span>
+                  {a.upcomingReleases > 0 && (
+                    <span className="ml-auto rounded-full bg-brand-100 px-1.5 text-xs text-brand-700 dark:bg-brand-500/20 dark:text-brand-300">
+                      {a.upcomingReleases}
+                    </span>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
         </aside>
 
         {/* Timeline */}
