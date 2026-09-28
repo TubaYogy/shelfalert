@@ -85,7 +85,7 @@ async function loginToBookNotification(
 
   // 1) Prime the WordPress "test cookie" by GETting the login page first.
   try {
-    const pre = await fetch(`${BN_BASE}/wp-login.php`, {
+    const pre = await fetch(`${BN_BASE}/login/`, {
       headers: BROWSER_HEADERS,
       redirect: "manual",
       signal: AbortSignal.timeout(30000),
@@ -101,21 +101,17 @@ async function loginToBookNotification(
   const body = new URLSearchParams({
     log: userLogin,
     pwd: userPass,
-    // Some WP setups use log/pwd, others user_login/user_pass — send both.
-    user_login: userLogin,
-    user_pass: userPass,
     rememberme: "forever",
     "wp-submit": "Log In",
-    redirect_to: `${BN_BASE}${CALENDAR_PATH}`,
-    testcookie: "1",
+    _wp_http_referer: "/login/",
   });
 
-  const res = await fetch(`${BN_BASE}/wp-login.php`, {
+  const res = await fetch(`${BN_BASE}/logout/login.php`, {
     method: "POST",
     headers: {
       ...BROWSER_HEADERS,
       "Content-Type": "application/x-www-form-urlencoded",
-      Referer: `${BN_BASE}/wp-login.php`,
+      Referer: `${BN_BASE}/login/`,
       Origin: BN_BASE,
       Cookie: cookieHeader(jar),
     },
@@ -128,7 +124,6 @@ async function loginToBookNotification(
 
   const loggedIn = [...jar.keys()].some((k) => k.startsWith("wordpress_logged_in"));
   if (!loggedIn) {
-    // Fall back to the pretty /login/ route if it exists on this install.
     throw new Error(
       "BookNotification login failed — no session cookie returned (check the login/email and password in Settings)."
     );
