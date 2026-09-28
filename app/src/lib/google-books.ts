@@ -19,7 +19,7 @@ export interface NormalizedRelease {
   googleBooksId?: string;
   openLibraryId?: string;
   hardcoverId?: string;
-  dataSource: "google_books" | "open_library" | "hardcover";
+  dataSource: "google_books" | "open_library" | "hardcover" | "bookorbit";
   authorNames: string[];
 }
 
@@ -45,13 +45,17 @@ const GOOGLE_ENDPOINT = "https://www.googleapis.com/books/v1/volumes";
 
 export async function searchGoogleBooksByAuthor(
   authorName: string,
-  maxResults = 40
+  maxResults = 40,
+  startIndex = 0
 ): Promise<NormalizedRelease[]> {
   const url = new URL(GOOGLE_ENDPOINT);
   url.searchParams.set("q", `inauthor:"${authorName}"`);
   url.searchParams.set("orderBy", "newest");
   url.searchParams.set("maxResults", String(Math.min(40, maxResults)));
   url.searchParams.set("printType", "books");
+  if (startIndex > 0) {
+    url.searchParams.set("startIndex", String(startIndex));
+  }
   if (process.env.GOOGLE_BOOKS_API_KEY) {
     url.searchParams.set("key", process.env.GOOGLE_BOOKS_API_KEY);
   }

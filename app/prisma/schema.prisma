@@ -36,7 +36,7 @@ model AppSettings {
   bookOrbitPassword String? // AES-encrypted BookOrbit account password
   hardcoverApiKey   String? // AES-encrypted Hardcover API token
   syncIntervalHours Int       @default(24)
-  lookbackDays      Int       @default(60) // 2 months past
+  lookbackDays      Int       @default(180) // 6 months past
   lookaheadDays     Int       @default(90) // 3 months future
   widgetToken       String?
   lastBookOrbitSync DateTime?

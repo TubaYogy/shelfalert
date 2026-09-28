@@ -1,12 +1,12 @@
 import { prisma } from "./prisma";
 import { getSettings, getBookOrbitClient } from "./settings";
-import { BookOrbitClient, buildLibraryIndex } from "./bookorbit";
+import { BookOrbitClient, BookOrbitBook, buildLibraryIndex } from "./bookorbit";
 import { searchGoogleBooksByAuthor, NormalizedRelease } from "./google-books";
 import { searchOpenLibraryByAuthor } from "./open-library";
 import { searchHardcoverByAuthor } from "./hardcover";
 import type { Author } from "@prisma/client";
 import type { ResolvedSettings } from "./settings";
-import { daysBetween, normalizeIsbn, normalizeTitle, sleep } from "./utils";
+import { daysBetween, normalizeIsbn, normalizeTitle, parseFlexibleDate, sleep } from "./utils";
 import type { ReleaseStatus } from "@prisma/client";
 
 export interface SyncResult {
@@ -186,16 +186,19 @@ export async function syncReleases(): Promise<SyncResult> {
       const candidates = await gatherReleasesForAuthor(author.name, author, settings);
 
       // Build the "already owned" index from BookOrbit, if available.
+      // Keep the raw books array so we can scan it directly for RECENT entries.
       let libIndex = { titles: new Set<string>(), isbns: new Set<string>() };
+      let boBooks: BookOrbitBook[] = [];
       if (boClient && author.bookOrbitId) {
         try {
-          const books = await boClient.getAuthorBooks(author.bookOrbitId);
-          libIndex = buildLibraryIndex(books);
+          boBooks = await boClient.getAuthorBooks(author.bookOrbitId);
+          libIndex = buildLibraryIndex(boBooks);
         } catch (err) {
           errors.push(`Library lookup for ${author.name}: ${(err as Error).message}`);
         }
       }
 
+      // Phase 1: upsert books found by external APIs (GB / OL / Hardcover).
       for (const rel of candidates) {
         const pd = rel.publishDate;
         // Filter to the configured window (skip items with no date entirely).
@@ -209,6 +212,63 @@ export async function syncReleases(): Promise<SyncResult> {
         await upsertRelease(author.id, rel, status, inLibrary);
         releasesUpserted += 1;
       }
+
+      // Phase 2: direct BookOrbit RECENT scan.
+      // Books the user already owns in BookOrbit with a recent publish date should
+      // always appear as RECENT — regardless of whether Google Books returned them.
+      // This is the most reliable source for "recently released books I have".
+      for (const book of boBooks) {
+        if (!book.title) continue;
+        // Parse the most specific date BookOrbit has.
+        const pd = parseFlexibleDate(
+          book.publishedDate ??
+            (book.publishedYear != null ? String(book.publishedYear) : null)
+        );
+        if (!pd) continue;
+        // Only consider books published within the lookback window (past books the
+        // user owns). Upcoming books are handled by the external-API phase.
+        if (pd < lookback || pd > now) continue;
+
+        // Try to find an existing Release record for this book (created above by
+        // the GB/OL/HC phase) — update its status rather than duplicating.
+        const isbn13Norm = normalizeIsbn(book.isbn13);
+        const existing = await prisma.release.findFirst({
+          where: {
+            authorId: author.id,
+            OR: [
+              ...(isbn13Norm ? [{ isbn13: isbn13Norm }] : []),
+              { title: book.title },
+            ],
+          },
+        });
+
+        if (existing) {
+          // Correct the status to RECENT + inLibrary=true if needed.
+          if (!existing.inLibrary || existing.status !== "RECENT") {
+            await prisma.release.update({
+              where: { id: existing.id },
+              data: { inLibrary: true, status: "RECENT" },
+            });
+          }
+        } else {
+          // Not found via external APIs — create directly from BookOrbit data.
+          const seriesNum = book.seriesIndex ? parseFloat(book.seriesIndex) : null;
+          await prisma.release.create({
+            data: {
+              title: book.title,
+              authorId: author.id,
+              isbn13: book.isbn13 ?? null,
+              publishDate: pd,
+              seriesName: book.seriesName ?? null,
+              seriesNumber: seriesNum != null && !isNaN(seriesNum) ? seriesNum : null,
+              inLibrary: true,
+              status: "RECENT",
+              dataSource: "bookorbit",
+            },
+          });
+          releasesUpserted += 1;
+        }
+      }
     } catch (err) {
       errors.push(`${author.name}: ${(err as Error).message}`);
     }
@@ -216,8 +276,11 @@ export async function syncReleases(): Promise<SyncResult> {
   }
 
   // Prune releases that fell outside the window on this run.
+  // Never prune books the user actually owns in their library — those are always
+  // kept regardless of the lookback window (they show as RECENT).
   await prisma.release.deleteMany({
     where: {
+      inLibrary: false,
       OR: [
         { publishDate: { lt: lookback } },
         { publishDate: { gt: lookahead } },
@@ -245,24 +308,39 @@ export async function syncReleases(): Promise<SyncResult> {
 
 /**
  * Gather candidate releases for an author from all configured data sources.
- * Google Books first; Open Library when few results; Hardcover when an API key
- * is configured (adds a third source for more complete coverage).
+ * Google Books (up to 2 pages = 80 results); Open Library when GB returns
+ * fewer than 20 results; Hardcover when an API key is configured.
  */
 async function gatherReleasesForAuthor(
   authorName: string,
   author?: Author,
   settings?: ResolvedSettings
 ): Promise<NormalizedRelease[]> {
-  let results: NormalizedRelease[] = [];
+  // Page 1 of Google Books (max 40 per request — API hard limit).
+  let gbPage1: NormalizedRelease[] = [];
   try {
-    results = await searchGoogleBooksByAuthor(authorName, 40);
+    gbPage1 = await searchGoogleBooksByAuthor(authorName, 40, 0);
   } catch {
-    results = [];
+    gbPage1 = [];
   }
 
-  if (results.length < 5) {
+  // Page 2: fetch only when page 1 was full (there are likely more results).
+  let gbPage2: NormalizedRelease[] = [];
+  if (gbPage1.length === 40) {
     try {
-      const ol = await searchOpenLibraryByAuthor(authorName, 20);
+      gbPage2 = await searchGoogleBooksByAuthor(authorName, 40, 40);
+    } catch {
+      gbPage2 = [];
+    }
+  }
+
+  let results = dedupe([...gbPage1, ...gbPage2]);
+
+  // Open Library as a supplement when Google Books coverage is thin
+  // (raised threshold from 5 → 20 to catch more gaps).
+  if (results.length < 20) {
+    try {
+      const ol = await searchOpenLibraryByAuthor(authorName, 40);
       results = dedupe([...results, ...ol]);
     } catch {
       /* ignore secondary source failures */
