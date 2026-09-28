@@ -233,7 +233,7 @@ const SERIES_BOOKS_QUERY = `
     series(where: { name: { _ilike: $name } }, limit: 5) {
       id
       name
-      series_books(order_by: { position: asc }) {
+      book_series(order_by: { position: asc }) {
         position
         book {
           title
@@ -247,7 +247,7 @@ interface SeriesBooksData {
   series?: {
     id: number;
     name?: string | null;
-    series_books?: {
+    book_series?: {
       position?: number | string | null;
       book?: { title?: string | null } | null;
     }[];
@@ -284,7 +284,7 @@ export async function lookupSeriesBookTitles(
       }
     }
 
-    for (const sb of best.series_books ?? []) {
+    for (const sb of best.book_series ?? []) {
       const pos = Number(sb.position);
       const title = sb.book?.title ?? null;
       if (Number.isFinite(pos) && pos > 0 && title) {
