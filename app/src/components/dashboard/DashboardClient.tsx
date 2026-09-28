@@ -77,13 +77,39 @@ export function DashboardClient() {
           : kind === "full"
             ? "/api/sync/releases?full=1"
             : "/api/sync/releases";
+
+      // Sync runs in the background — the POST returns 202 immediately.
       const res = await fetch(url, { method: "POST" });
       const result = await res.json();
-      setToast(result.message ?? result.error ?? "Sync complete");
-      await load();
+
+      if (result.running === false) {
+        // Shouldn't happen, but handle gracefully.
+        setToast(result.message ?? "Sync complete");
+        setSyncing(null);
+        await load();
+        return;
+      }
+
+      setToast("Sync running in the background — this may take several minutes for large libraries…");
+
+      // Poll /api/sync/status until the sync finishes.
+      const poll = setInterval(async () => {
+        try {
+          const statusRes = await fetch("/api/sync/status");
+          const status = await statusRes.json();
+          if (!status.running) {
+            clearInterval(poll);
+            setSyncing(null);
+            setToast(status.lastSyncStatus ?? "Sync complete");
+            await load();
+            setTimeout(() => setToast(null), 8000);
+          }
+        } catch {
+          // Keep polling — a transient error doesn't mean the sync stopped.
+        }
+      }, 5000); // poll every 5 seconds
     } catch {
-      setToast("Sync failed — check the server logs.");
-    } finally {
+      setToast("Could not reach the server — check the server logs.");
       setSyncing(null);
       setTimeout(() => setToast(null), 6000);
     }

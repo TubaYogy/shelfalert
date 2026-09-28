@@ -16,6 +16,10 @@ import { runFullSync, recomputeStatuses } from "./release-sync";
 let task: ScheduledTask | null = null;
 let running = false;
 
+export function isSyncRunning(): boolean {
+  return running;
+}
+
 async function guardedFullSync(reason: string): Promise<void> {
   if (running) {
     console.log(`[scheduler] Sync already running, skipping (${reason}).`);
