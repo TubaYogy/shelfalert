@@ -1,5 +1,5 @@
 import { NormalizedRelease } from "./google-books";
-import { parseFlexibleDate } from "./utils";
+import { parseFlexibleDate, sleep } from "./utils";
 
 /**
  * Hardcover.app data source (GraphQL).
@@ -21,27 +21,49 @@ const SEARCH_AUTHOR_QUERY = `
 `;
 
 const AUTHOR_BOOKS_QUERY = `
-  query AuthorBooks($authorId: Int!, $limit: Int!) {
-    books(
-      where: { contributions: { author_id: { _eq: $authorId } } }
-      order_by: { release_date: desc_nulls_last }
-      limit: $limit
+  query AuthorBooks($authorId: Int!, $today: date!) {
+    upcoming: books(
+      where: {
+        contributions: { author_id: { _eq: $authorId } }
+        _or: [
+          { release_date: { _gte: $today } }
+          { release_date: { _is_null: true } }
+        ]
+      }
+      order_by: { release_date: asc_nulls_first }
+      limit: 50
     ) {
       id
       slug
       title
       release_date
       series_books {
-        series {
-          name
-        }
+        series { name }
         position
       }
       contributions {
-        author {
-          id
-          name
-        }
+        author { id name }
+      }
+      editions {
+        isbn_13
+        reading_format_id
+      }
+    }
+    all: books(
+      where: { contributions: { author_id: { _eq: $authorId } } }
+      order_by: { release_date: desc_nulls_last }
+      limit: 100
+    ) {
+      id
+      slug
+      title
+      release_date
+      series_books {
+        series { name }
+        position
+      }
+      contributions {
+        author { id name }
       }
       editions {
         isbn_13
@@ -155,7 +177,8 @@ async function resolveAuthorId(authorName: string, apiKey: string): Promise<numb
 }
 
 interface AuthorBooksData {
-  books?: HardcoverBook[];
+  upcoming?: HardcoverBook[];
+  all?: HardcoverBook[];
 }
 
 function normalizeBook(book: HardcoverBook): NormalizedRelease | null {
@@ -205,18 +228,31 @@ export async function searchHardcoverByAuthor(
 
   if (!authorId) {
     authorId = await resolveAuthorId(authorName, apiKey);
-  }
-  if (!authorId) {
-    return { releases: [], resolvedAuthorId: null };
+    if (!authorId) return { releases: [], resolvedAuthorId: null };
+    // Space between the resolve call and the upcoming books call to stay under
+    // Hardcover's 60 req/min limit (2 calls per author on first resolve).
+    await sleep(1100);
   }
 
+  const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
   const data = await hardcoverGraphQL<AuthorBooksData>(
     AUTHOR_BOOKS_QUERY,
-    { authorId, limit: 150 },
+    { authorId, today },
     apiKey
   );
 
-  const books = data.books ?? [];
+  // Merge upcoming-first with all, deduped by Hardcover book id.
+  const upcomingBooks = data.upcoming ?? [];
+  const allBooks = data.all ?? [];
+  const seenIds = new Set<number>();
+  const books: HardcoverBook[] = [];
+  for (const b of [...upcomingBooks, ...allBooks]) {
+    if (!seenIds.has(b.id)) {
+      seenIds.add(b.id);
+      books.push(b);
+    }
+  }
+
   const releases = books
     .map((b) => normalizeBook(b))
     .filter((r): r is NormalizedRelease => r !== null);

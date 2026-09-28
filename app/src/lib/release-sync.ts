@@ -397,6 +397,7 @@ async function gatherReleasesForAuthor(
 
 function dedupe(items: NormalizedRelease[]): NormalizedRelease[] {
   const seen = new Map<string, NormalizedRelease>();
+  const now = new Date();
   for (const item of items) {
     const isbnKey = normalizeIsbn(item.isbn13) || normalizeIsbn(item.isbn);
     const key = isbnKey || normalizeTitle(item.title);
@@ -404,9 +405,28 @@ function dedupe(items: NormalizedRelease[]): NormalizedRelease[] {
     const existing = seen.get(key);
     if (!existing) {
       seen.set(key, item);
-    } else if (!existing.coverUrl && item.coverUrl) {
-      // Prefer the record that has a cover image.
-      seen.set(key, { ...existing, coverUrl: item.coverUrl });
+    } else {
+      // Prefer the record with an upcoming (future) publish date.
+      const itemDate = item.publishDate ? new Date(item.publishDate) : null;
+      const existingDate = existing.publishDate ? new Date(existing.publishDate) : null;
+      const itemIsFuture = itemDate !== null && itemDate > now;
+      const existingIsFuture = existingDate !== null && existingDate > now;
+
+      let preferred: NormalizedRelease;
+      if (itemIsFuture && !existingIsFuture) {
+        preferred = item;
+      } else if (!itemIsFuture && existingIsFuture) {
+        preferred = existing;
+      } else {
+        preferred = existing; // unchanged
+      }
+
+      // Supplement: carry over a cover image from whichever side has one.
+      if (!preferred.coverUrl) {
+        const other = preferred === existing ? item : existing;
+        if (other.coverUrl) preferred = { ...preferred, coverUrl: other.coverUrl };
+      }
+      seen.set(key, preferred);
     }
   }
   return [...seen.values()];
