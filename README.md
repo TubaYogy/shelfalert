@@ -19,11 +19,14 @@ and a background sync scheduler, all in a single `docker compose` stack.
 ## ✨ Features
 
 - **Author tracking** — pulls your author list straight from BookOrbit (`/api/v1/authors`), or add authors manually.
-- **Upcoming + recent releases** — configurable window (default: 2 months back, 3 months ahead), refreshed on a schedule.
+- **Multi-source release data** — aggregates from **Google Books**, **Open Library**, **Hardcover.app** (optional), and **BookNotification.com** (optional scraper).
+- **Upcoming + recent releases** — configurable window (default: 6 months back, 3 months ahead), refreshed on a schedule.
 - **Missing-book detection** — cross-references each release against your BookOrbit library (ISBN + title match) and flags what you don't own.
-- **Missing-in-series** — reads BookOrbit series data and highlights gaps (e.g. you have #1, #2, #4 → #3 is missing).
-- **Timeline dashboard** — month-grouped, color-coded status badges (🔵 Upcoming / 🟢 In Library / 🟠 Missing), cover art, per-author filter, dark/light theme.
+- **Series gap detection** — reads BookOrbit series data, highlights missing books in series (e.g. you have #1, #2, #4 → #3 flagged), and fetches expected titles from Hardcover.
+- **BookNotification.com integration** — optionally scrape your personal BookNotification calendar to supplement release data, with a dashboard section highlighting authors you haven't yet added to your BN watchlist.
+- **Timeline dashboard** — month-grouped, color-coded status badges (🔵 Upcoming / 🟢 In Library / 🟠 Missing), cover art, series info, per-author filter, dark/light theme.
 - **Homarr V2 widget** — token-guarded JSON endpoint **and** an embeddable iFrame widget page.
+- **Fire-and-forget sync** — long-running syncs return `202 Accepted` immediately; poll `/api/sync/status` for completion.
 - **Scheduled background sync** — `node-cron` inside a custom Next.js server; runs on boot if overdue.
 - **Simple auth now, SSO later** — username/password to start, OIDC (Authelia/Authentik) ready via env vars.
 - **Dockhand / Portainer / Watchtower friendly** — health checks, named volumes, update labels.
@@ -99,6 +102,51 @@ Then in ShelfAlert go to **Settings → BookOrbit Connection**:
 - **Save Settings**, then hit **Sync from BookOrbit** on the Authors page.
 
 The token is stored **AES-256-GCM encrypted** in the database (key derived from `NEXTAUTH_SECRET`).
+
+---
+
+## 📖 Optional data sources
+
+### Hardcover.app (recommended)
+
+[Hardcover](https://hardcover.app) is a free book-tracking community with excellent metadata
+coverage for upcoming releases. Adding your Hardcover API key **dramatically improves**
+upcoming-book discovery, especially for null-dated pre-announcements that Google Books misses.
+
+**Setup:**
+1. Create a free Hardcover account at [hardcover.app](https://hardcover.app)
+2. Go to **Settings → API** and generate a personal API token (1-year validity)
+3. In ShelfAlert **Settings → Data Sources → Hardcover**, paste the token
+4. Click **Test Connection** → should show your Hardcover username
+5. Save and run a sync
+
+**Rate limits:** 60 req/min, 5000 req/day. ShelfAlert respects these with automatic
+backoff and 2-second inter-call delays.
+
+**What it adds:**
+- Upcoming books with null or future `release_date` that Google Books doesn't index yet
+- Series metadata (name + number) for gap detection
+- Expected book titles for missing series positions
+
+### BookNotification.com scraper (optional)
+
+If you already track authors on [BookNotification.com](https://www.booknotification.com),
+ShelfAlert can **scrape your personal book calendar** to supplement release data. This is
+especially useful if you've hit FantasticFiction's 200-author limit.
+
+**Setup:**
+1. Have an active BookNotification.com account with authors in your watchlist
+2. In ShelfAlert **Settings → Data Sources → BookNotification**, enter your login email/username and password
+3. Click **Sync BookNotification** — it logs in, scrapes `/my-library/book-calendar/`, and imports releases
+4. Releases are matched to your tracked authors by name
+
+**"Add to BookNotification" workflow:**
+- After syncing, ShelfAlert flags authors from your BookOrbit library that aren't yet tracked on BookNotification
+- The dashboard shows a collapsible **"Add to BookNotification"** section listing these "untracked" authors
+- Manually add them to your BookNotification watchlist, then re-sync to clear the list
+
+**Credentials security:** Stored AES-256-GCM encrypted. The scraper mimics a real browser
+to avoid bot detection.
 
 ---
 
@@ -288,15 +336,45 @@ Schema changes are applied automatically on container start via `prisma db push`
 
 ## 🗃️ How the sync works
 
-1. **Author sync** (`/api/sync/bookorbit`): pages through BookOrbit `/api/v1/authors`, upserts each author, and scans `/api/v1/series` for gaps.
-2. **Release sync** (`/api/sync/releases`): for every active author →
-   - Query Google Books `inauthor:"Name"&orderBy=newest` (falls back to Open Library if few results).
-   - Keep releases whose date is within `[today - lookbackDays, today + lookaheadDays]`.
-   - Deduplicate by ISBN, then normalized title.
-   - Cross-reference the author's BookOrbit books to set `inLibrary`.
-   - Status = **UPCOMING** (future) / **RECENT** (past & owned) / **MISSING** (past & not owned).
-   - A polite 500 ms delay between authors keeps the external APIs happy.
-3. **Scheduler** (`server.ts` + `lib/scheduler.ts`): hourly tick recomputes statuses and triggers a full sync once `syncIntervalHours` has elapsed. Runs immediately on boot if overdue.
+ShelfAlert uses a **fire-and-forget** sync model: manual sync buttons return `202 Accepted`
+immediately and the work runs in the background. Poll `/api/sync/status` or watch the
+dashboard spinner to track completion.
+
+### 1. Author sync (`POST /api/sync/bookorbit`)
+- Pages through BookOrbit `/api/v1/authors`, upserts each author
+- Scans `/api/v1/series` to build a series→books index for gap detection
+- Identifies missing positions (e.g. you own #1, #2, #4 → flags #3 as a gap)
+- If Hardcover is configured, looks up expected titles for missing positions via the `book_series` query
+- Returns immediately with 202; actual work runs async
+
+### 2. Release sync (`POST /api/sync/releases`)
+For every **active** author, gather releases from multiple sources:
+1. **Google Books** — `inauthor:"Name"&orderBy=newest` (pages 1+2, max 80 books)
+2. **Open Library** — fallback when Google Books returns <20 results
+3. **Hardcover** (optional) — targeted query for upcoming + null-dated books (respects 60 req/min with 2s delays and 429 retry-with-backoff)
+4. **Dedupe strategy** — merge by ISBN/title, preferring records with **future publish dates** over past/null dates (fixes Google Books stale-date issue)
+5. **Filter by window** — keep only releases within `[today - lookbackDays, today + lookaheadDays]` (defaults: 180 back, 90 ahead)
+6. **Match to library** — cross-reference BookOrbit books by ISBN + normalized title to set `inLibrary`
+7. **Compute status**:
+   - **UPCOMING** = future date
+   - **RECENT** = past date + in library
+   - **MISSING** = past date + not in library
+8. Upsert all releases to the database
+
+Returns 202 immediately; the sync continues in the background.
+
+### 3. BookNotification sync (`POST /api/sync/booknotification`)
+- Logs into booknotification.com via WordPress form POST
+- Scrapes the `/my-library/book-calendar/` HTML page
+- Parses release table (title, author, series, date)
+- Matches releases to existing tracked authors by normalized name
+- Upserts as UPCOMING/RECENT and marks matched authors as `bookNotificationTracked = true`
+- Dashboard highlights any authors **not** seen on BN (the "add to BN" workflow)
+
+### 4. Background scheduler
+- **Hourly tick** (`node-cron` in `server.ts`): recomputes release statuses and checks if a full sync is due
+- **On boot**: runs an immediate full sync if `lastReleaseSync` is older than `syncIntervalHours`
+- **Manual trigger**: dashboard "Full Sync" button calls `/api/sync/releases?full=1`
 
 ---
 
