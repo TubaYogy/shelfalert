@@ -9,6 +9,7 @@ interface SettingsData {
   bookOrbitInternalUrl: string | null;
   bookOrbitUsername: string | null;
   hasBookOrbitCredentials: boolean;
+  hardcoverApiKey: string | null;
   syncIntervalHours: number;
   lookbackDays: number;
   lookaheadDays: number;
@@ -28,6 +29,9 @@ export function SettingsClient() {
   const [internalUrl, setInternalUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [hardcoverKey, setHardcoverKey] = useState("");
+  const [hardcoverTesting, setHardcoverTesting] = useState(false);
+  const [hardcoverResult, setHardcoverResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [interval, setInterval] = useState(24);
   const [lookback, setLookback] = useState(60);
   const [lookahead, setLookahead] = useState(90);
@@ -75,6 +79,7 @@ export function SettingsClient() {
         lookaheadDays: lookahead,
       };
       if (password) body.bookOrbitPassword = password;
+      if (hardcoverKey) body.hardcoverApiKey = hardcoverKey;
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -82,6 +87,7 @@ export function SettingsClient() {
       });
       if (res.ok) {
         setPassword("");
+        setHardcoverKey("");
         flash("Settings saved");
         await load();
       } else {
@@ -89,6 +95,28 @@ export function SettingsClient() {
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function testHardcover() {
+    setHardcoverTesting(true);
+    setHardcoverResult(null);
+    try {
+      const res = await fetch("/api/settings/hardcover-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hardcoverApiKey: hardcoverKey || undefined }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        setHardcoverResult({ ok: true, msg: `Connected as ${d.username}.` });
+      } else {
+        setHardcoverResult({ ok: false, msg: d.error ?? "Connection failed" });
+      }
+    } catch {
+      setHardcoverResult({ ok: false, msg: "Network error" });
+    } finally {
+      setHardcoverTesting(false);
     }
   }
 
@@ -243,6 +271,55 @@ export function SettingsClient() {
           <div className="flex gap-2">
             <Button variant="outline" onClick={testConnection} disabled={testing}>
               {testing ? <Spinner /> : <Plug className="h-4 w-4" />}
+              Test Connection
+            </Button>
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Hardcover connection */}
+      <Card>
+        <CardHeader>
+          <h2 className="flex items-center gap-2 font-semibold">
+            <KeyRound className="h-5 w-5 text-brand-600" /> Hardcover (Optional)
+          </h2>
+        </CardHeader>
+        <CardBody className="space-y-4">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Adds Hardcover as a third book data source for more complete release coverage. Get your
+            API token from hardcover.app &rarr; Settings &rarr; Developer.
+          </p>
+          <div>
+            <Label htmlFor="hardcoverKey">
+              Hardcover API Token{" "}
+              {data.hardcoverApiKey && (
+                <span className="text-xs font-normal text-green-600 dark:text-green-400">
+                  (a token is stored — leave blank to keep it)
+                </span>
+              )}
+            </Label>
+            <Input
+              id="hardcoverKey"
+              type="password"
+              placeholder={data.hardcoverApiKey ? "•••••••• (unchanged)" : "Your Hardcover API token"}
+              value={hardcoverKey}
+              onChange={(e) => setHardcoverKey(e.target.value)}
+            />
+          </div>
+          {hardcoverResult && (
+            <p
+              className={
+                hardcoverResult.ok
+                  ? "rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700 dark:bg-green-500/10 dark:text-green-400"
+                  : "rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-400"
+              }
+            >
+              {hardcoverResult.msg}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={testHardcover} disabled={hardcoverTesting}>
+              {hardcoverTesting ? <Spinner /> : <Plug className="h-4 w-4" />}
               Test Connection
             </Button>
           </div>

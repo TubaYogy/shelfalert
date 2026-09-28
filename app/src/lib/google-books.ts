@@ -18,7 +18,8 @@ export interface NormalizedRelease {
   seriesNumber?: number;
   googleBooksId?: string;
   openLibraryId?: string;
-  dataSource: "google_books" | "open_library";
+  hardcoverId?: string;
+  dataSource: "google_books" | "open_library" | "hardcover";
   authorNames: string[];
 }
 

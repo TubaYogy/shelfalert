@@ -33,7 +33,7 @@ export function ReleaseCard({ release }: { release: ReleaseCardData }) {
           {release.author.name}
         </p>
         {release.seriesName && (
-          <p className="mt-1 truncate text-xs text-brand-600 dark:text-brand-400">
+          <p className="mt-1 truncate text-sm italic text-slate-500 dark:text-slate-400">
             {release.seriesName}
             {release.seriesNumber != null ? ` #${release.seriesNumber}` : ""}
           </p>

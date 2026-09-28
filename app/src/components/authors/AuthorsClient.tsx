@@ -1,9 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Plus, Trash2, Eye, EyeOff, UserRound } from "lucide-react";
 import { Button, Card, CardBody, Input, Spinner } from "@/components/ui";
 import { BookCover } from "@/components/dashboard/BookCover";
+import { LetterFilterBar, letterOf, activeLettersFor } from "@/components/letter-filter-bar";
+
+/** Surname = last whitespace-separated word of the name. */
+function surnameOf(name: string): string {
+  const parts = (name ?? "").trim().split(/\s+/);
+  return parts.length ? parts[parts.length - 1] : "";
+}
 
 interface Author {
   id: number;
@@ -23,6 +30,17 @@ export function AuthorsClient() {
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [letter, setLetter] = useState("");
+
+  const activeLetters = useMemo(
+    () => activeLettersFor(authors.map((a) => surnameOf(a.name))),
+    [authors]
+  );
+
+  const filteredAuthors = useMemo(() => {
+    if (!letter) return authors;
+    return authors.filter((a) => letterOf(surnameOf(a.name)) === letter);
+  }, [authors, letter]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,7 +117,10 @@ export function AuthorsClient() {
         <div>
           <h1 className="text-2xl font-bold">Tracked Authors</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            {authors.length} authors · {authors.filter((a) => a.isActive).length} active
+            {letter
+              ? `${filteredAuthors.length} of ${authors.length} authors`
+              : `${authors.length} authors`}{" "}
+            · {authors.filter((a) => a.isActive).length} active
           </p>
         </div>
         <Button onClick={syncFromBookOrbit} disabled={syncing}>
@@ -130,6 +151,15 @@ export function AuthorsClient() {
         </CardBody>
       </Card>
 
+      {authors.length > 0 && (
+        <LetterFilterBar
+          items={authors.map((a) => ({ key: surnameOf(a.name) }))}
+          activeLetters={activeLetters}
+          selected={letter}
+          onSelect={setLetter}
+        />
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-16 text-slate-400">
           <Spinner className="mr-2 h-6 w-6" /> Loading…
@@ -138,9 +168,13 @@ export function AuthorsClient() {
         <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center text-sm text-slate-400 dark:border-slate-700">
           No authors yet. Sync from BookOrbit or add one manually above.
         </div>
+      ) : filteredAuthors.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center text-sm text-slate-400 dark:border-slate-700">
+          No authors with surname starting with “{letter}”.
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {authors.map((a) => (
+          {filteredAuthors.map((a) => (
             <Card key={a.id} className={a.isActive ? "" : "opacity-60"}>
               <CardBody className="flex gap-3">
                 {a.photoUrl ? (

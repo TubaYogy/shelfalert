@@ -15,6 +15,7 @@ export async function GET() {
     bookOrbitInternalUrl: s.bookOrbitInternalUrl,
     bookOrbitUsername: s.bookOrbitUsername,
     hasBookOrbitCredentials: s.hasBookOrbitCredentials,
+    hardcoverApiKey: s.hasHardcoverKey ? "configured" : null,
     syncIntervalHours: s.syncIntervalHours,
     lookbackDays: s.lookbackDays,
     lookaheadDays: s.lookaheadDays,
@@ -45,6 +46,7 @@ export async function PATCH(req: NextRequest) {
     bookOrbitInternalUrl: body.bookOrbitInternalUrl as string | undefined,
     bookOrbitUsername: body.bookOrbitUsername as string | undefined,
     bookOrbitPassword: body.bookOrbitPassword as string | undefined,
+    hardcoverApiKey: body.hardcoverApiKey as string | undefined,
     syncIntervalHours:
       body.syncIntervalHours !== undefined ? Number(body.syncIntervalHours) : undefined,
     lookbackDays: body.lookbackDays !== undefined ? Number(body.lookbackDays) : undefined,

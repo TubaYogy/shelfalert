@@ -6,6 +6,13 @@ import { Button, Card, CardBody, Spinner } from "@/components/ui";
 import { ReleaseCard, type ReleaseCardData } from "./ReleaseCard";
 import { StatusBadge } from "./StatusBadge";
 import { monthKey, monthLabel, formatDate } from "@/lib/utils";
+import { LetterFilterBar, letterOf, activeLettersFor } from "@/components/letter-filter-bar";
+
+/** Surname = last whitespace-separated word of the name. */
+function surnameOf(name: string): string {
+  const parts = (name ?? "").trim().split(/\s+/);
+  return parts.length ? parts[parts.length - 1] : "";
+}
 
 interface SeriesGap {
   id: number;
@@ -31,6 +38,9 @@ export function DashboardClient() {
   const [authors, setAuthors] = useState<AuthorLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedAuthor, setSelectedAuthor] = useState<number | "all">("all");
+  const [upcomingLetter, setUpcomingLetter] = useState("");
+  const [recentLetter, setRecentLetter] = useState("");
+  const [seriesLetter, setSeriesLetter] = useState("");
   const [syncing, setSyncing] = useState<null | "authors" | "releases" | "full">(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -86,15 +96,48 @@ export function DashboardClient() {
   const upcoming = filtered.filter((r) => r.status === "UPCOMING");
   const recent = filtered.filter((r) => r.status === "RECENT" || r.status === "MISSING");
 
+  // Per-section A-Z filters (each section owns its own selection).
+  const upcomingActiveLetters = useMemo(
+    () => activeLettersFor(upcoming.map((r) => surnameOf(r.author.name))),
+    [upcoming]
+  );
+  const recentActiveLetters = useMemo(
+    () => activeLettersFor(recent.map((r) => surnameOf(r.author.name))),
+    [recent]
+  );
+  const seriesActiveLetters = useMemo(
+    () => activeLettersFor((data?.seriesGaps ?? []).map((g) => g.seriesName)),
+    [data]
+  );
+
+  const upcomingFiltered = useMemo(
+    () =>
+      upcomingLetter
+        ? upcoming.filter((r) => letterOf(surnameOf(r.author.name)) === upcomingLetter)
+        : upcoming,
+    [upcoming, upcomingLetter]
+  );
+  const recentFiltered = useMemo(
+    () =>
+      recentLetter
+        ? recent.filter((r) => letterOf(surnameOf(r.author.name)) === recentLetter)
+        : recent,
+    [recent, recentLetter]
+  );
+  const seriesGapsFiltered = useMemo(() => {
+    const gaps = data?.seriesGaps ?? [];
+    return seriesLetter ? gaps.filter((g) => letterOf(g.seriesName) === seriesLetter) : gaps;
+  }, [data, seriesLetter]);
+
   const upcomingByMonth = useMemo(() => {
     const groups = new Map<string, ReleaseCardData[]>();
-    for (const r of upcoming) {
+    for (const r of upcomingFiltered) {
       const key = r.publishDate ? monthKey(new Date(r.publishDate)) : "tba";
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(r);
     }
     return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [upcoming]);
+  }, [upcomingFiltered]);
 
   if (loading && !data) {
     return (
@@ -176,6 +219,16 @@ export function DashboardClient() {
         <div className="space-y-8">
           <section>
             <h2 className="mb-3 text-lg font-semibold">Upcoming Releases</h2>
+            {upcoming.length > 0 && (
+              <div className="mb-3">
+                <LetterFilterBar
+                  items={upcoming.map((r) => ({ key: surnameOf(r.author.name) }))}
+                  activeLetters={upcomingActiveLetters}
+                  selected={upcomingLetter}
+                  onSelect={setUpcomingLetter}
+                />
+              </div>
+            )}
             {upcomingByMonth.length === 0 ? (
               <EmptyState message="No upcoming releases in the tracking window. Try running a sync." />
             ) : (
@@ -201,11 +254,21 @@ export function DashboardClient() {
               Recently Released{" "}
               <span className="text-sm font-normal text-slate-400">(past window)</span>
             </h2>
-            {recent.length === 0 ? (
+            {recent.length > 0 && (
+              <div className="mb-3">
+                <LetterFilterBar
+                  items={recent.map((r) => ({ key: surnameOf(r.author.name) }))}
+                  activeLetters={recentActiveLetters}
+                  selected={recentLetter}
+                  onSelect={setRecentLetter}
+                />
+              </div>
+            )}
+            {recentFiltered.length === 0 ? (
               <EmptyState message="No recent releases in the tracking window." />
             ) : (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {recent.map((r) => (
+                {recentFiltered.map((r) => (
                   <ReleaseCard key={r.id} release={r} />
                 ))}
               </div>
@@ -218,9 +281,22 @@ export function DashboardClient() {
                 <AlertTriangle className="h-5 w-5 text-orange-500" />
                 Missing in Series
               </h2>
+              <div className="mb-3">
+                <LetterFilterBar
+                  items={data.seriesGaps.map((g) => ({ key: g.seriesName }))}
+                  activeLetters={seriesActiveLetters}
+                  selected={seriesLetter}
+                  onSelect={setSeriesLetter}
+                />
+              </div>
               <Card>
                 <CardBody className="divide-y divide-slate-100 p-0 dark:divide-slate-800">
-                  {data.seriesGaps.map((g) => (
+                  {seriesGapsFiltered.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-sm text-slate-400">
+                      No series starting with “{seriesLetter}”.
+                    </div>
+                  ) : (
+                    seriesGapsFiltered.map((g) => (
                     <div key={g.id} className="flex items-center justify-between px-4 py-3">
                       <div>
                         <p className="text-sm font-medium">{g.seriesName}</p>
@@ -233,7 +309,8 @@ export function DashboardClient() {
                         <StatusBadge status="MISSING" />
                       </div>
                     </div>
-                  ))}
+                    ))
+                  )}
                 </CardBody>
               </Card>
             </section>

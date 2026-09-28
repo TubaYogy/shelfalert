@@ -34,6 +34,7 @@ model AppSettings {
   bookOrbitInternalUrl String? // internal/direct URL used by server-side API calls (bypasses reverse proxy/Authelia)
   bookOrbitUsername    String? // BookOrbit account username (login)
   bookOrbitPassword String? // AES-encrypted BookOrbit account password
+  hardcoverApiKey   String? // AES-encrypted Hardcover API token
   syncIntervalHours Int       @default(24)
   lookbackDays      Int       @default(60) // 2 months past
   lookaheadDays     Int       @default(90) // 3 months future
@@ -49,6 +50,7 @@ model Author {
   name        String
   sortName    String?
   bookOrbitId Int?      @unique
+  hardcoverAuthorId Int?  @unique
   photoUrl    String?
   isActive    Boolean   @default(true)
   source      String    @default("bookorbit") // "bookorbit" | "manual"
@@ -72,6 +74,7 @@ model Release {
   description   String?
   googleBooksId String?       @unique
   openLibraryId String?       @unique
+  hardcoverId   String?       @unique
   pageCount     Int?
   inLibrary     Boolean       @default(false)
   status        ReleaseStatus @default(UPCOMING)

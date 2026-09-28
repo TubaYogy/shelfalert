@@ -3,6 +3,9 @@ import { getSettings, getBookOrbitClient } from "./settings";
 import { BookOrbitClient, buildLibraryIndex } from "./bookorbit";
 import { searchGoogleBooksByAuthor, NormalizedRelease } from "./google-books";
 import { searchOpenLibraryByAuthor } from "./open-library";
+import { searchHardcoverByAuthor } from "./hardcover";
+import type { Author } from "@prisma/client";
+import type { ResolvedSettings } from "./settings";
 import { daysBetween, normalizeIsbn, normalizeTitle, sleep } from "./utils";
 import type { ReleaseStatus } from "@prisma/client";
 
@@ -180,7 +183,7 @@ export async function syncReleases(): Promise<SyncResult> {
 
   for (const author of authors) {
     try {
-      const candidates = await gatherReleasesForAuthor(author.name);
+      const candidates = await gatherReleasesForAuthor(author.name, author, settings);
 
       // Build the "already owned" index from BookOrbit, if available.
       let libIndex = { titles: new Set<string>(), isbns: new Set<string>() };
@@ -240,8 +243,16 @@ export async function syncReleases(): Promise<SyncResult> {
   });
 }
 
-/** Google Books first; fall back to Open Library when few results returned. */
-async function gatherReleasesForAuthor(authorName: string): Promise<NormalizedRelease[]> {
+/**
+ * Gather candidate releases for an author from all configured data sources.
+ * Google Books first; Open Library when few results; Hardcover when an API key
+ * is configured (adds a third source for more complete coverage).
+ */
+async function gatherReleasesForAuthor(
+  authorName: string,
+  author?: Author,
+  settings?: ResolvedSettings
+): Promise<NormalizedRelease[]> {
   let results: NormalizedRelease[] = [];
   try {
     results = await searchGoogleBooksByAuthor(authorName, 40);
@@ -257,6 +268,34 @@ async function gatherReleasesForAuthor(authorName: string): Promise<NormalizedRe
       /* ignore secondary source failures */
     }
   }
+
+  // Hardcover — optional third source, only when an API key is configured.
+  if (settings?.hardcoverApiKey) {
+    try {
+      const { releases, resolvedAuthorId } = await searchHardcoverByAuthor(
+        authorName,
+        settings.hardcoverApiKey,
+        author?.hardcoverAuthorId ?? null
+      );
+      // Cache the resolved Hardcover author id when it changed.
+      if (author && resolvedAuthorId && resolvedAuthorId !== author.hardcoverAuthorId) {
+        try {
+          await prisma.author.update({
+            where: { id: author.id },
+            data: { hardcoverAuthorId: resolvedAuthorId },
+          });
+        } catch {
+          /* ignore cache-update failures (e.g. unique conflict) */
+        }
+      }
+      results = dedupe([...results, ...releases]);
+    } catch {
+      /* ignore Hardcover source failures */
+    }
+    // Respect Hardcover's 60 req/min limit.
+    await sleep(1100);
+  }
+
   return dedupe(results);
 }
 
@@ -322,7 +361,12 @@ async function upsertRelease(
     await prisma.release.upsert({
       where: { googleBooksId: rel.googleBooksId },
       update: data,
-      create: { ...data, googleBooksId: rel.googleBooksId, openLibraryId: rel.openLibraryId ?? null },
+      create: {
+        ...data,
+        googleBooksId: rel.googleBooksId,
+        openLibraryId: rel.openLibraryId ?? null,
+        hardcoverId: rel.hardcoverId ?? null,
+      },
     });
     return;
   }
@@ -330,7 +374,15 @@ async function upsertRelease(
     await prisma.release.upsert({
       where: { openLibraryId: rel.openLibraryId },
       update: data,
-      create: { ...data, openLibraryId: rel.openLibraryId },
+      create: { ...data, openLibraryId: rel.openLibraryId, hardcoverId: rel.hardcoverId ?? null },
+    });
+    return;
+  }
+  if (rel.hardcoverId) {
+    await prisma.release.upsert({
+      where: { hardcoverId: rel.hardcoverId },
+      update: data,
+      create: { ...data, hardcoverId: rel.hardcoverId },
     });
     return;
   }

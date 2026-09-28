@@ -9,6 +9,8 @@ export interface ResolvedSettings {
   bookOrbitUsername: string | null;
   bookOrbitPassword: string | null; // decrypted, plaintext
   hasBookOrbitCredentials: boolean;
+  hardcoverApiKey: string | null; // decrypted, plaintext
+  hasHardcoverKey: boolean;
   syncIntervalHours: number;
   lookbackDays: number;
   lookaheadDays: number;
@@ -27,6 +29,7 @@ export async function getSettings(): Promise<ResolvedSettings> {
     });
   }
   const password = decrypt(row.bookOrbitPassword);
+  const hardcoverApiKey = decrypt(row.hardcoverApiKey);
   return {
     id: row.id,
     bookOrbitUrl: row.bookOrbitUrl,
@@ -34,6 +37,8 @@ export async function getSettings(): Promise<ResolvedSettings> {
     bookOrbitUsername: row.bookOrbitUsername,
     bookOrbitPassword: password,
     hasBookOrbitCredentials: Boolean(row.bookOrbitUrl && row.bookOrbitUsername && row.bookOrbitPassword),
+    hardcoverApiKey,
+    hasHardcoverKey: Boolean(row.hardcoverApiKey),
     syncIntervalHours: row.syncIntervalHours,
     lookbackDays: row.lookbackDays,
     lookaheadDays: row.lookaheadDays,
@@ -66,6 +71,7 @@ export interface UpdateSettingsInput {
   bookOrbitInternalUrl?: string | null;
   bookOrbitUsername?: string | null;
   bookOrbitPassword?: string | null; // plaintext; will be encrypted. Empty string clears.
+  hardcoverApiKey?: string | null; // plaintext; will be encrypted. Empty string clears.
   syncIntervalHours?: number;
   lookbackDays?: number;
   lookaheadDays?: number;
@@ -90,6 +96,14 @@ export async function updateSettings(input: UpdateSettingsInput): Promise<Resolv
       data.bookOrbitPassword = null;
     } else if (input.bookOrbitPassword) {
       data.bookOrbitPassword = encrypt(input.bookOrbitPassword.trim());
+    }
+  }
+  if (input.hardcoverApiKey !== undefined) {
+    // Only overwrite when a non-empty value is supplied; empty string clears it.
+    if (input.hardcoverApiKey === "") {
+      data.hardcoverApiKey = null;
+    } else if (input.hardcoverApiKey) {
+      data.hardcoverApiKey = encrypt(input.hardcoverApiKey);
     }
   }
   if (input.syncIntervalHours !== undefined) {

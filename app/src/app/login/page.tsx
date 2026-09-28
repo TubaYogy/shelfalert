@@ -87,11 +87,6 @@ function LoginForm() {
               {loading ? <Spinner /> : "Sign in"}
             </Button>
           </form>
-
-          <p className="mt-6 text-center text-xs text-slate-400">
-            Default admin credentials are set via the ADMIN_USERNAME / ADMIN_PASSWORD
-            environment variables.
-          </p>
         </CardBody>
       </Card>
     </main>
