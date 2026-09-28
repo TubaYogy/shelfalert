@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, RotateCw, CalendarClock, AlertTriangle, Library, Search, X } from "lucide-react";
+import { RefreshCw, RotateCw, CalendarClock, AlertTriangle, Library, Search, X, Bell, ChevronDown, ChevronRight } from "lucide-react";
 import { Button, Card, CardBody, Spinner } from "@/components/ui";
 import { ReleaseCard, type ReleaseCardData } from "./ReleaseCard";
 import { StatusBadge } from "./StatusBadge";
@@ -32,6 +32,8 @@ interface ReleasesResponse {
   releases: (ReleaseCardData & { authorId: number })[];
   counts: { upcoming: number; recent: number; missing: number; total: number };
   seriesGaps: SeriesGap[];
+  untrackedAuthors?: { id: number; name: string }[];
+  bookNotificationEnabled?: boolean;
 }
 
 interface AuthorLite {
@@ -54,6 +56,7 @@ export function DashboardClient() {
   const [syncing, setSyncing] = useState<null | "authors" | "releases" | "full">(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [bnOpen, setBnOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -426,6 +429,48 @@ export function DashboardClient() {
                   )}
                 </CardBody>
               </Card>
+            </section>
+          )}
+
+          {data?.bookNotificationEnabled && (data?.untrackedAuthors?.length ?? 0) > 0 && (
+            <section>
+              <button
+                onClick={() => setBnOpen((o) => !o)}
+                className="mb-3 flex w-full items-center gap-2 text-lg font-semibold"
+              >
+                {bnOpen ? (
+                  <ChevronDown className="h-5 w-5 text-slate-400" />
+                ) : (
+                  <ChevronRight className="h-5 w-5 text-slate-400" />
+                )}
+                <Bell className="h-5 w-5 text-brand-600" />
+                Add to BookNotification
+                <span className="ml-1 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700 dark:bg-brand-500/20 dark:text-brand-300">
+                  {data?.untrackedAuthors?.length ?? 0}
+                </span>
+              </button>
+              {bnOpen && (
+                <Card>
+                  <CardBody className="space-y-3">
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      These tracked authors have not appeared on your BookNotification calendar yet.
+                      Add them to your BookNotification watchlist, then run a BookNotification sync
+                      to clear them from this list.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(data?.untrackedAuthors ?? []).map((a) => (
+                        <span
+                          key={a.id}
+                          className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                        >
+                          {a.name}
+                          <span className="text-[10px] font-semibold text-orange-500">Not on BN</span>
+                        </span>
+                      ))}
+                    </div>
+                  </CardBody>
+                </Card>
+              )}
             </section>
           )}
         </div>

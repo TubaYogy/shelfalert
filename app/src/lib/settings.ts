@@ -11,6 +11,9 @@ export interface ResolvedSettings {
   hasBookOrbitCredentials: boolean;
   hardcoverApiKey: string | null; // decrypted, plaintext
   hasHardcoverKey: boolean;
+  bookNotificationLogin: string | null;
+  bookNotificationPassword: string | null; // decrypted, plaintext
+  hasBookNotificationCredentials: boolean;
   syncIntervalHours: number;
   lookbackDays: number;
   lookaheadDays: number;
@@ -30,6 +33,7 @@ export async function getSettings(): Promise<ResolvedSettings> {
   }
   const password = decrypt(row.bookOrbitPassword);
   const hardcoverApiKey = decrypt(row.hardcoverApiKey);
+  const bookNotificationPassword = decrypt(row.bookNotificationPassword);
   return {
     id: row.id,
     bookOrbitUrl: row.bookOrbitUrl,
@@ -39,6 +43,11 @@ export async function getSettings(): Promise<ResolvedSettings> {
     hasBookOrbitCredentials: Boolean(row.bookOrbitUrl && row.bookOrbitUsername && row.bookOrbitPassword),
     hardcoverApiKey,
     hasHardcoverKey: Boolean(row.hardcoverApiKey),
+    bookNotificationLogin: row.bookNotificationLogin,
+    bookNotificationPassword,
+    hasBookNotificationCredentials: Boolean(
+      row.bookNotificationLogin && row.bookNotificationPassword
+    ),
     syncIntervalHours: row.syncIntervalHours,
     lookbackDays: row.lookbackDays,
     lookaheadDays: row.lookaheadDays,
@@ -72,6 +81,8 @@ export interface UpdateSettingsInput {
   bookOrbitUsername?: string | null;
   bookOrbitPassword?: string | null; // plaintext; will be encrypted. Empty string clears.
   hardcoverApiKey?: string | null; // plaintext; will be encrypted. Empty string clears.
+  bookNotificationLogin?: string | null;
+  bookNotificationPassword?: string | null; // plaintext; will be encrypted. Empty string clears.
   syncIntervalHours?: number;
   lookbackDays?: number;
   lookaheadDays?: number;
@@ -104,6 +115,17 @@ export async function updateSettings(input: UpdateSettingsInput): Promise<Resolv
       data.hardcoverApiKey = null;
     } else if (input.hardcoverApiKey) {
       data.hardcoverApiKey = encrypt(input.hardcoverApiKey);
+    }
+  }
+  if (input.bookNotificationLogin !== undefined) {
+    data.bookNotificationLogin = input.bookNotificationLogin?.trim() || null;
+  }
+  if (input.bookNotificationPassword !== undefined) {
+    // Only overwrite when a non-empty value is supplied; empty string clears it.
+    if (input.bookNotificationPassword === "") {
+      data.bookNotificationPassword = null;
+    } else if (input.bookNotificationPassword) {
+      data.bookNotificationPassword = encrypt(input.bookNotificationPassword);
     }
   }
   if (input.syncIntervalHours !== undefined) {

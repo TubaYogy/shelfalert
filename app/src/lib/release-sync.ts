@@ -4,6 +4,7 @@ import { BookOrbitClient, BookOrbitBook, buildLibraryIndex } from "./bookorbit";
 import { searchGoogleBooksByAuthor, NormalizedRelease } from "./google-books";
 import { searchOpenLibraryByAuthor } from "./open-library";
 import { searchHardcoverByAuthor, lookupSeriesBookTitles } from "./hardcover";
+import { scrapeBookNotificationCalendar } from "./booknotification";
 import type { Author } from "@prisma/client";
 import type { ResolvedSettings } from "./settings";
 import { daysBetween, normalizeIsbn, normalizeTitle, parseFlexibleDate, sleep } from "./utils";
@@ -568,6 +569,112 @@ export async function recomputeStatuses(): Promise<void> {
       await prisma.release.update({ where: { id: r.id }, data: { status: next } });
     }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  BookNotification.com sync                                          */
+/* ------------------------------------------------------------------ */
+
+function buildAuthorNameIndex(authors: Author[]): Map<string, Author> {
+  const map = new Map<string, Author>();
+  for (const a of authors) {
+    map.set(normalizeTitle(a.name), a);
+  }
+  return map;
+}
+
+function matchAuthor(authorNames: string[], index: Map<string, Author>): Author | null {
+  for (const name of authorNames) {
+    const match = index.get(normalizeTitle(name));
+    if (match) return match;
+  }
+  return null;
+}
+
+/**
+ * Scrape the user's BookNotification.com calendar and import releases for any
+ * author already tracked in ShelfAlert. Matched authors are flagged
+ * `bookNotificationTracked = true` so the dashboard can highlight the tracked
+ * authors that are NOT yet on BookNotification (i.e. ones the user still needs
+ * to add to their BookNotification watchlist).
+ */
+export async function syncBookNotification(): Promise<SyncResult> {
+  const startedAt = new Date();
+  const errors: string[] = [];
+
+  const settings = await getSettings();
+  if (!settings.bookNotificationLogin || !settings.bookNotificationPassword) {
+    return finalize(startedAt, {
+      ok: false,
+      message: "BookNotification login/password not configured in Settings.",
+      errors: ["Missing credentials"],
+    });
+  }
+
+  let releases: NormalizedRelease[];
+  try {
+    releases = await scrapeBookNotificationCalendar(
+      settings.bookNotificationLogin,
+      settings.bookNotificationPassword
+    );
+  } catch (err) {
+    const msg = (err as Error).message;
+    return finalize(startedAt, {
+      ok: false,
+      message: `BookNotification scrape failed: ${msg}`,
+      errors: [msg],
+    });
+  }
+
+  if (releases.length === 0) {
+    return finalize(startedAt, {
+      ok: false,
+      message: "No releases found on the BookNotification calendar.",
+      errors: ["Zero releases parsed"],
+    });
+  }
+
+  const authors = await prisma.author.findMany();
+  const authorIndex = buildAuthorNameIndex(authors);
+  const now = new Date();
+
+  let releasesUpserted = 0;
+  const matchedAuthorIds = new Set<number>();
+
+  for (const rel of releases) {
+    const author = matchAuthor(rel.authorNames ?? [], authorIndex);
+    if (!author) continue; // Only import releases for authors we already track.
+
+    matchedAuthorIds.add(author.id);
+    const status: ReleaseStatus =
+      rel.publishDate && rel.publishDate.getTime() > now.getTime() ? "UPCOMING" : "RECENT";
+    try {
+      await upsertRelease(author.id, rel, status, false);
+      releasesUpserted++;
+    } catch {
+      /* ignore individual upsert failures */
+    }
+  }
+
+  // Flag every matched author as present on BookNotification.
+  if (matchedAuthorIds.size > 0) {
+    try {
+      await prisma.author.updateMany({
+        where: { id: { in: [...matchedAuthorIds] } },
+        data: { bookNotificationTracked: true },
+      });
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  const untracked = authors.length - matchedAuthorIds.size;
+  return finalize(startedAt, {
+    ok: true,
+    message: `Imported ${releasesUpserted} releases from BookNotification (${matchedAuthorIds.size} authors matched, ${untracked} tracked authors not yet on BookNotification).`,
+    releasesUpserted,
+    errors,
+  });
 }
 
 export { daysBetween };

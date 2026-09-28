@@ -35,6 +35,8 @@ model AppSettings {
   bookOrbitUsername    String? // BookOrbit account username (login)
   bookOrbitPassword String? // AES-encrypted BookOrbit account password
   hardcoverApiKey   String? // AES-encrypted Hardcover API token
+  bookNotificationLogin    String? // BookNotification.com account login/email
+  bookNotificationPassword String? // AES-encrypted BookNotification.com password
   syncIntervalHours Int       @default(24)
   lookbackDays      Int       @default(180) // 6 months past
   lookaheadDays     Int       @default(90) // 3 months future
@@ -54,6 +56,7 @@ model Author {
   photoUrl    String?
   isActive    Boolean   @default(true)
   source      String    @default("bookorbit") // "bookorbit" | "manual"
+  bookNotificationTracked Boolean @default(false) // true once seen on the BookNotification calendar
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   releases    Release[]

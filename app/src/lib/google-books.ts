@@ -19,7 +19,7 @@ export interface NormalizedRelease {
   googleBooksId?: string;
   openLibraryId?: string;
   hardcoverId?: string;
-  dataSource: "google_books" | "open_library" | "hardcover" | "bookorbit";
+  dataSource: "google_books" | "open_library" | "hardcover" | "bookorbit" | "booknotification";
   authorNames: string[];
 }
 
