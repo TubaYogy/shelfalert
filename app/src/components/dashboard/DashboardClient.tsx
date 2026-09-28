@@ -43,6 +43,7 @@ export function DashboardClient() {
   const [upcomingLetter, setUpcomingLetter] = useState("");
   const [recentLetter, setRecentLetter] = useState("");
   const [seriesLetter, setSeriesLetter] = useState("");
+  const [recentMissingOnly, setRecentMissingOnly] = useState(false);
   const [syncing, setSyncing] = useState<null | "authors" | "releases" | "full">(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -151,13 +152,11 @@ export function DashboardClient() {
         : upcoming,
     [upcoming, upcomingLetter]
   );
-  const recentFiltered = useMemo(
-    () =>
-      recentLetter
-        ? recent.filter((r) => letterOf(surnameOf(r.author.name)) === recentLetter)
-        : recent,
-    [recent, recentLetter]
-  );
+  const recentFiltered = useMemo(() => {
+    let list = recentMissingOnly ? recent.filter((r) => r.status === "MISSING") : recent;
+    if (recentLetter) list = list.filter((r) => letterOf(surnameOf(r.author.name)) === recentLetter);
+    return list;
+  }, [recent, recentLetter, recentMissingOnly]);
   const seriesGapsFiltered = useMemo(() => {
     const gaps = data?.seriesGaps ?? [];
     return seriesLetter ? gaps.filter((g) => letterOf(g.seriesName) === seriesLetter) : gaps;
@@ -316,10 +315,23 @@ export function DashboardClient() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-lg font-semibold">
-              Recently Released{" "}
-              <span className="text-sm font-normal text-slate-400">(past window)</span>
-            </h2>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold">
+                Recently Released{" "}
+                <span className="text-sm font-normal text-slate-400">(past window)</span>
+              </h2>
+              <button
+                onClick={() => setRecentMissingOnly((v) => !v)}
+                className={[
+                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                  recentMissingOnly
+                    ? "border-orange-400 bg-orange-50 text-orange-700 dark:border-orange-500 dark:bg-orange-500/10 dark:text-orange-300"
+                    : "border-slate-300 bg-white text-slate-500 hover:border-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500",
+                ].join(" ")}
+              >
+                {recentMissingOnly ? "⚠ Missing only" : "Show all"}
+              </button>
+            </div>
             {recent.length > 0 && (
               <div className="mb-3">
                 <LetterFilterBar
