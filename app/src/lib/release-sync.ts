@@ -389,7 +389,7 @@ async function gatherReleasesForAuthor(
       /* ignore Hardcover source failures */
     }
     // Respect Hardcover's 60 req/min limit.
-    await sleep(1100);
+    await sleep(2000);
   }
 
   return dedupe(results);

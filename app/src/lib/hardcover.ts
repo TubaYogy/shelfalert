@@ -22,7 +22,7 @@ const SEARCH_AUTHOR_QUERY = `
 
 const AUTHOR_BOOKS_QUERY = `
   query AuthorBooks($authorId: Int!, $today: date!) {
-    upcoming: books(
+    books(
       where: {
         contributions: { author_id: { _eq: $authorId } }
         _or: [
@@ -32,27 +32,6 @@ const AUTHOR_BOOKS_QUERY = `
       }
       order_by: { release_date: asc_nulls_first }
       limit: 50
-    ) {
-      id
-      slug
-      title
-      release_date
-      series_books {
-        series { name }
-        position
-      }
-      contributions {
-        author { id name }
-      }
-      editions {
-        isbn_13
-        reading_format_id
-      }
-    }
-    all: books(
-      where: { contributions: { author_id: { _eq: $authorId } } }
-      order_by: { release_date: desc_nulls_last }
-      limit: 100
     ) {
       id
       slug
@@ -119,6 +98,31 @@ async function hardcoverGraphQL<T>(
     throw new Error(`Hardcover request failed: ${(err as Error).message}`);
   }
 
+  if (res.status === 429) {
+    // Rate limited — back off for the window Hardcover asks for, then retry once.
+    const retryAfter = parseInt(res.headers.get("Retry-After") ?? "65", 10);
+    const waitMs = (Number.isFinite(retryAfter) ? Math.max(retryAfter, 60) : 65) * 1000;
+    await sleep(waitMs);
+    try {
+      res = await fetch(HARDCOVER_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({ query, variables }),
+        signal: AbortSignal.timeout(30000),
+        cache: "no-store",
+      });
+    } catch (err) {
+      throw new Error(`Hardcover retry failed: ${(err as Error).message}`);
+    }
+    if (!res.ok) {
+      throw new Error(`Hardcover returned HTTP ${res.status} after rate-limit retry`);
+    }
+  }
+
   if (!res.ok) {
     throw new Error(`Hardcover returned HTTP ${res.status}`);
   }
@@ -177,8 +181,7 @@ async function resolveAuthorId(authorName: string, apiKey: string): Promise<numb
 }
 
 interface AuthorBooksData {
-  upcoming?: HardcoverBook[];
-  all?: HardcoverBook[];
+  books?: HardcoverBook[];
 }
 
 function normalizeBook(book: HardcoverBook): NormalizedRelease | null {
@@ -231,7 +234,7 @@ export async function searchHardcoverByAuthor(
     if (!authorId) return { releases: [], resolvedAuthorId: null };
     // Space between the resolve call and the upcoming books call to stay under
     // Hardcover's 60 req/min limit (2 calls per author on first resolve).
-    await sleep(1100);
+    await sleep(2000);
   }
 
   const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
@@ -241,18 +244,7 @@ export async function searchHardcoverByAuthor(
     apiKey
   );
 
-  // Merge upcoming-first with all, deduped by Hardcover book id.
-  const upcomingBooks = data.upcoming ?? [];
-  const allBooks = data.all ?? [];
-  const seenIds = new Set<number>();
-  const books: HardcoverBook[] = [];
-  for (const b of [...upcomingBooks, ...allBooks]) {
-    if (!seenIds.has(b.id)) {
-      seenIds.add(b.id);
-      books.push(b);
-    }
-  }
-
+  const books = data.books ?? [];
   const releases = books
     .map((b) => normalizeBook(b))
     .filter((r): r is NormalizedRelease => r !== null);
