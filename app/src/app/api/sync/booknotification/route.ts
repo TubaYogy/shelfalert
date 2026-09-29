@@ -4,11 +4,23 @@ import { syncBookNotification } from "@/lib/release-sync";
 import { parseBookNotificationCsv } from "@/lib/booknotification";
 
 /**
+ * Module-level guard preventing overlapping BookNotification imports. The import
+ * runs in the background (fire-and-forget) after the request responds, so this
+ * flag stops a second upload from kicking off a duplicate concurrent run.
+ */
+let bnSyncRunning = false;
+
+/**
  * POST /api/sync/booknotification
  * Accepts a multipart/form-data upload with a `file` field containing the CSV
- * exported from booknotification.com (My Library → Download CSV). Parses the
- * CSV, imports releases for tracked authors, and flags matched authors as
- * present on BookNotification.
+ * exported from booknotification.com (My Library → Download CSV).
+ *
+ * The multipart body is fully read and parsed synchronously (fast, in-memory),
+ * then the actual database import — hundreds of sequential upserts — is fired in
+ * the background WITHOUT awaiting it, and the handler returns 202 immediately.
+ * Awaiting the import would exceed the HTTP timeout and surface as a browser
+ * "Network error". This mirrors the fire-and-forget pattern in
+ * /api/sync/releases and /api/sync/bookorbit.
  *
  * The site's LiteSpeed WAF blocks server-side scraping (non-browser TLS
  * fingerprints are redirected before any session cookie is set), so a manual
@@ -18,6 +30,8 @@ export async function POST(req: NextRequest) {
   const guard = await requireSession();
   if ("response" in guard) return guard.response;
 
+  // 1) Read the multipart body fully BEFORE responding — Next.js closes the
+  //    request stream once a response is sent, so this must happen up front.
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -44,6 +58,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // 2) Parse the CSV in memory (fast).
   let releases;
   try {
     releases = parseBookNotificationCsv(csvText);
@@ -65,13 +80,33 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  try {
-    const result = await syncBookNotification(releases);
-    return NextResponse.json(result, { status: result.ok ? 200 : 502 });
-  } catch (err) {
+  // 3) Prevent overlapping imports.
+  if (bnSyncRunning) {
     return NextResponse.json(
-      { ok: false, message: (err as Error).message },
-      { status: 500 }
+      {
+        ok: true,
+        message:
+          "A BookNotification import is already running. Refresh the page in a moment to see results.",
+      },
+      { status: 202 }
     );
   }
+
+  // 4) Fire the import in the background WITHOUT awaiting it, then respond 202.
+  bnSyncRunning = true;
+  void syncBookNotification(releases)
+    .catch((err) => {
+      console.error("[booknotification] background import failed:", err);
+    })
+    .finally(() => {
+      bnSyncRunning = false;
+    });
+
+  return NextResponse.json(
+    {
+      ok: true,
+      message: `Starting import of ${releases.length} releases in the background. Refresh the page in a moment to see results.`,
+    },
+    { status: 202 }
+  );
 }
