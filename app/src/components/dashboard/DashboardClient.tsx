@@ -57,6 +57,12 @@ export function DashboardClient() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [bnOpen, setBnOpen] = useState(false);
+  // Collapsible section / month state.
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
+  const [recentOpen, setRecentOpen] = useState(true);
+  const [seriesOpen, setSeriesOpen] = useState(true);
+  // Sticky section nav — tracks which section is currently in view.
+  const [activeSection, setActiveSection] = useState<string>("upcoming");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -200,6 +206,68 @@ export function DashboardClient() {
     return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [upcomingFiltered]);
 
+  // --- Collapsible month helpers ---
+  const toggleMonth = useCallback((key: string) => {
+    setCollapsedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const allMonthsCollapsed = useMemo(
+    () => upcomingByMonth.length > 0 && upcomingByMonth.every(([key]) => collapsedMonths.has(key)),
+    [upcomingByMonth, collapsedMonths]
+  );
+  const collapseAllMonths = useCallback(() => {
+    setCollapsedMonths(new Set(upcomingByMonth.map(([key]) => key)));
+  }, [upcomingByMonth]);
+  const expandAllMonths = useCallback(() => setCollapsedMonths(new Set()), []);
+
+  // --- Section nav config (only sections with items appear) ---
+  const showNav = selectedAuthor === "all";
+  const navSections = useMemo(
+    () => [
+      { id: "upcoming", label: "Upcoming", icon: "📅", count: upcoming.length },
+      { id: "recent", label: "Recent", icon: "🕐", count: recent.length },
+      { id: "series-gaps", label: "Series Gaps", icon: "⚠", count: groupedSeriesGaps.length },
+      {
+        id: "add-to-bn",
+        label: "Not on BN",
+        icon: "🔔",
+        count:
+          data?.bookNotificationEnabled ? data?.untrackedAuthors?.length ?? 0 : 0,
+      },
+    ].filter((s) => s.count > 0),
+    [upcoming.length, recent.length, groupedSeriesGaps.length, data]
+  );
+
+  const scrollToSection = useCallback((id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  // --- Track the section currently in view for nav highlighting ---
+  useEffect(() => {
+    if (!showNav || navSections.length === 0) return;
+    const ids = navSections.map((s) => s.id);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) {
+          setActiveSection(visible[0].target.id);
+        }
+      },
+      { rootMargin: "-96px 0px -60% 0px", threshold: 0 }
+    );
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, [showNav, navSections, loading]);
+
   if (loading && !data) {
     return (
       <div className="flex items-center justify-center py-24 text-slate-400">
@@ -247,6 +315,40 @@ export function DashboardClient() {
         <StatCard icon={<AlertTriangle className="h-5 w-5" />} label="Missing" value={data?.counts.missing ?? 0} tone="orange" />
         <StatCard icon={<Library className="h-5 w-5" />} label="Total tracked" value={data?.counts.total ?? 0} tone="slate" />
       </div>
+
+      {/* Sticky section nav */}
+      {showNav && navSections.length > 0 && (
+        <nav className="sticky top-16 z-10 -mx-2 bg-slate-50 px-2 py-2 dark:bg-slate-900">
+          <div className="flex flex-wrap gap-2 rounded-xl bg-slate-800/50 p-2 backdrop-blur dark:bg-slate-800/50">
+            {navSections.map((s) => {
+              const active = activeSection === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => scrollToSection(s.id)}
+                  className={[
+                    "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+                    active
+                      ? "bg-brand-600 text-white shadow-sm"
+                      : "bg-slate-700/40 text-slate-300 hover:bg-slate-700/70",
+                  ].join(" ")}
+                >
+                  <span aria-hidden>{s.icon}</span>
+                  {s.label}
+                  <span
+                    className={[
+                      "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                      active ? "bg-white/20 text-white" : "bg-slate-600/50 text-slate-200",
+                    ].join(" ")}
+                  >
+                    {s.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_1fr]">
         {/* Author filter sidebar */}
@@ -310,8 +412,18 @@ export function DashboardClient() {
 
         {/* Timeline */}
         <div className="space-y-8">
-          <section>
-            <h2 className="mb-3 text-lg font-semibold">Upcoming Releases</h2>
+          <section id="upcoming" className="scroll-mt-24">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold">Upcoming Releases</h2>
+              {upcomingByMonth.length > 1 && (
+                <button
+                  onClick={allMonthsCollapsed ? expandAllMonths : collapseAllMonths}
+                  className="text-xs font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300"
+                >
+                  {allMonthsCollapsed ? "Expand all" : "Collapse all"}
+                </button>
+              )}
+            </div>
             {upcoming.length > 0 && (
               <div className="mb-3">
                 <LetterFilterBar
@@ -326,67 +438,110 @@ export function DashboardClient() {
               <EmptyState message="No upcoming releases in the tracking window. Try running a sync." />
             ) : (
               <div className="space-y-6">
-                {upcomingByMonth.map(([key, items]) => (
-                  <div key={key}>
-                    <h3 className="mb-2 text-sm font-semibold text-slate-500 dark:text-slate-400">
-                      {key === "tba" ? "Date TBA" : monthLabel(key)}
-                    </h3>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      {items.map((r) => (
-                        <ReleaseCard key={r.id} release={r} />
-                      ))}
+                {upcomingByMonth.map(([key, items]) => {
+                  const collapsed = collapsedMonths.has(key);
+                  return (
+                    <div key={key}>
+                      <button
+                        onClick={() => toggleMonth(key)}
+                        className="mb-2 flex w-full items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                      >
+                        {collapsed ? (
+                          <ChevronRight className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                        {key === "tba" ? "Date TBA" : monthLabel(key)}
+                        <span className="ml-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                          {items.length}
+                        </span>
+                      </button>
+                      {!collapsed && (
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          {items.map((r) => (
+                            <ReleaseCard key={r.id} release={r} />
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
 
-          <section>
+          <section id="recent" className="scroll-mt-24">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">
+              <button
+                onClick={() => setRecentOpen((v) => !v)}
+                className="flex items-center gap-1.5 text-lg font-semibold"
+              >
+                {recentOpen ? (
+                  <ChevronDown className="h-5 w-5 text-slate-400" />
+                ) : (
+                  <ChevronRight className="h-5 w-5 text-slate-400" />
+                )}
                 Recently Released{" "}
                 <span className="text-sm font-normal text-slate-400">(past window)</span>
-              </h2>
-              <button
-                onClick={() => setRecentMissingOnly((v) => !v)}
-                className={[
-                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                  recentMissingOnly
-                    ? "border-orange-400 bg-orange-50 text-orange-700 dark:border-orange-500 dark:bg-orange-500/10 dark:text-orange-300"
-                    : "border-slate-300 bg-white text-slate-500 hover:border-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500",
-                ].join(" ")}
-              >
-                {recentMissingOnly ? "⚠ Missing only" : "Show all"}
               </button>
+              {recentOpen && (
+                <button
+                  onClick={() => setRecentMissingOnly((v) => !v)}
+                  className={[
+                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    recentMissingOnly
+                      ? "border-orange-400 bg-orange-50 text-orange-700 dark:border-orange-500 dark:bg-orange-500/10 dark:text-orange-300"
+                      : "border-slate-300 bg-white text-slate-500 hover:border-slate-400 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400 dark:hover:border-slate-500",
+                  ].join(" ")}
+                >
+                  {recentMissingOnly ? "⚠ Missing only" : "Show all"}
+                </button>
+              )}
             </div>
-            {recent.length > 0 && (
-              <div className="mb-3">
-                <LetterFilterBar
-                  items={recent.map((r) => ({ key: surnameOf(r.author.name) }))}
-                  activeLetters={recentActiveLetters}
-                  selected={recentLetter}
-                  onSelect={setRecentLetter}
-                />
-              </div>
-            )}
-            {recentFiltered.length === 0 ? (
-              <EmptyState message="No recent releases in the tracking window." />
-            ) : (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {recentFiltered.map((r) => (
-                  <ReleaseCard key={r.id} release={r} />
-                ))}
-              </div>
+            {recentOpen && (
+              <>
+                {recent.length > 0 && (
+                  <div className="mb-3">
+                    <LetterFilterBar
+                      items={recent.map((r) => ({ key: surnameOf(r.author.name) }))}
+                      activeLetters={recentActiveLetters}
+                      selected={recentLetter}
+                      onSelect={setRecentLetter}
+                    />
+                  </div>
+                )}
+                {recentFiltered.length === 0 ? (
+                  <EmptyState message="No recent releases in the tracking window." />
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {recentFiltered.map((r) => (
+                      <ReleaseCard key={r.id} release={r} />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </section>
 
           {groupedSeriesGaps.length > 0 && (
-            <section>
-              <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold">
+            <section id="series-gaps" className="scroll-mt-24">
+              <button
+                onClick={() => setSeriesOpen((v) => !v)}
+                className="mb-3 flex w-full items-center gap-2 text-lg font-semibold"
+              >
+                {seriesOpen ? (
+                  <ChevronDown className="h-5 w-5 text-slate-400" />
+                ) : (
+                  <ChevronRight className="h-5 w-5 text-slate-400" />
+                )}
                 <AlertTriangle className="h-5 w-5 text-orange-500" />
                 Missing in Series
-              </h2>
+                <span className="ml-1 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-700 dark:bg-orange-500/20 dark:text-orange-300">
+                  {groupedSeriesGaps.length}
+                </span>
+              </button>
+              {seriesOpen && (
+              <>
               <div className="mb-3">
                 <LetterFilterBar
                   items={groupedSeriesGaps.map((g) => ({ key: g.seriesName }))}
@@ -429,11 +584,13 @@ export function DashboardClient() {
                   )}
                 </CardBody>
               </Card>
+              </>
+              )}
             </section>
           )}
 
           {data?.bookNotificationEnabled && (data?.untrackedAuthors?.length ?? 0) > 0 && (
-            <section>
+            <section id="add-to-bn" className="scroll-mt-24">
               <button
                 onClick={() => setBnOpen((o) => !o)}
                 className="mb-3 flex w-full items-center gap-2 text-lg font-semibold"
